@@ -1,0 +1,15 @@
+C:\Code\Thesis\StudyCsharp\StudyCsharp\bin\Debug\net10.0\StudyCsharp.exe
+C:\Code\Thesis\StudyCsharp\StudyCsharp\bin\Debug\net10.0\StudyCsharp.deps.json
+C:\Code\Thesis\StudyCsharp\StudyCsharp\bin\Debug\net10.0\StudyCsharp.runtimeconfig.json
+C:\Code\Thesis\StudyCsharp\StudyCsharp\bin\Debug\net10.0\StudyCsharp.dll
+C:\Code\Thesis\StudyCsharp\StudyCsharp\bin\Debug\net10.0\StudyCsharp.pdb
+C:\Code\Thesis\StudyCsharp\StudyCsharp\obj\Debug\net10.0\StudyCsharp.GeneratedMSBuildEditorConfig.editorconfig
+C:\Code\Thesis\StudyCsharp\StudyCsharp\obj\Debug\net10.0\StudyCsharp.AssemblyInfoInputs.cache
+C:\Code\Thesis\StudyCsharp\StudyCsharp\obj\Debug\net10.0\StudyCsharp.AssemblyInfo.cs
+C:\Code\Thesis\StudyCsharp\StudyCsharp\obj\Debug\net10.0\StudyCsharp.csproj.CoreCompileInputs.cache
+C:\Code\Thesis\StudyCsharp\StudyCsharp\obj\Debug\net10.0\StudyCsharp.sourcelink.json
+C:\Code\Thesis\StudyCsharp\StudyCsharp\obj\Debug\net10.0\StudyCsharp.dll
+C:\Code\Thesis\StudyCsharp\StudyCsharp\obj\Debug\net10.0\refint\StudyCsharp.dll
+C:\Code\Thesis\StudyCsharp\StudyCsharp\obj\Debug\net10.0\StudyCsharp.pdb
+C:\Code\Thesis\StudyCsharp\StudyCsharp\obj\Debug\net10.0\StudyCsharp.genruntimeconfig.cache
+C:\Code\Thesis\StudyCsharp\StudyCsharp\obj\Debug\net10.0\ref\StudyCsharp.dll
