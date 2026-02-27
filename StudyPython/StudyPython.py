@@ -109,7 +109,8 @@ def stratified_subsample_by_target(
     if len(out) < n:
         remaining = n - len(out)
         rest = df.drop(index=out.index)
-        out = pd.concat([out, rest.sample(n=remaining, random_state=seed)], axis=0)
+        out = pd.concat(
+            [out, rest.sample(n=remaining, random_state=seed)], axis=0)
 
     # Shuffle deterministically so concatenation order doesn’t matter.
     return out.sample(frac=1.0, random_state=seed).reset_index(drop=True)
@@ -142,7 +143,8 @@ def load_clean_and_select_features(
     needed = set(BASE_FEATURES + [TARGET])
     missing = sorted([c for c in needed if c not in df.columns])
     if missing:
-        raise ValueError(f"Missing required columns: {missing}. Available: {list(df.columns)}")
+        raise ValueError(
+            f"Missing required columns: {missing}. Available: {list(df.columns)}")
 
     # Only coerce model columns to numeric; anything invalid becomes NaN.
     model_cols = BASE_FEATURES + [TARGET]
@@ -157,7 +159,8 @@ def load_clean_and_select_features(
 
     # Optional feature: network asymmetry = a_to_b - b_to_a
     if derive_network_asymmetry:
-        df["network_asymmetry"] = (df["network_value_a_to_b"] - df["network_value_b_to_a"]).astype(float)
+        df["network_asymmetry"] = (
+            df["network_value_a_to_b"] - df["network_value_b_to_a"]).astype(float)
         features.append("network_asymmetry")
 
     # Drop constant features (no signal).
@@ -252,7 +255,8 @@ def main() -> None:
 
     sizes = [int(s.strip()) for s in args.sizes.split(",") if s.strip()]
     if not sizes or any(s <= 0 for s in sizes):
-        raise ValueError("Provide positive integers in --sizes (comma-separated).")
+        raise ValueError(
+            "Provide positive integers in --sizes (comma-separated).")
 
     # Load + clean once so I don’t mix scaling effects with repeated disk I/O/cache effects.
     df_clean, features, load_ms, clean_ms = load_clean_and_select_features(
@@ -267,9 +271,11 @@ def main() -> None:
 
         # Deterministic subset selection.
         if args.stratify_by_target:
-            sub = stratified_subsample_by_target(df_clean, n_eff, TARGET, seed=args.seed)
+            sub = stratified_subsample_by_target(
+                df_clean, n_eff, TARGET, seed=args.seed)
         else:
-            sub = df_clean.sample(n=n_eff, random_state=args.seed).reset_index(drop=True)
+            sub = df_clean.sample(
+                n=n_eff, random_state=args.seed).reset_index(drop=True)
 
         # Warmup runs to reduce one-time allocation/caching noise (not recorded).
         for w in range(args.warmup):
@@ -282,11 +288,14 @@ def main() -> None:
 
         # Measured repeats.
         for r in range(args.repeats):
-            split_seed = (args.seed + r) if args.vary_split_per_repeat else args.seed
-            times = split_train_infer_times(sub, features, test_size=args.test_size, seed=split_seed)
+            split_seed = (
+                args.seed + r) if args.vary_split_per_repeat else args.seed
+            times = split_train_infer_times(
+                sub, features, test_size=args.test_size, seed=split_seed)
 
             preprocess_ms = clean_ms + times["split_ms"]
-            total_ms = load_ms + clean_ms + times["split_ms"] + times["train_ms"] + times["infer_ms"]
+            total_ms = load_ms + clean_ms + \
+                times["split_ms"] + times["train_ms"] + times["infer_ms"]
 
             rows.append(
                 {
