@@ -26,6 +26,7 @@ class Program
         "seniority_match"
     };
 
+
     static double NowMs() =>
         Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
 
@@ -134,10 +135,18 @@ class Program
 
                 foreach (var f in BASE_FEATURES.Append(TARGET))
                 {
-                    if (rowDict.TryGetValue(f, out var raw) &&
-                        float.TryParse(raw?.ToString(), out float val))
+                    if (rowDict.TryGetValue(f, out var raw))
                     {
-                        dict[f] = val;
+                        var str = raw?.ToString()?.Trim();
+
+                        if (float.TryParse(
+                                str,
+                                NumberStyles.Any,
+                                CultureInfo.InvariantCulture,
+                                out float val))
+                        {
+                            dict[f] = val;
+                        }
                     }
                 }
 
@@ -187,12 +196,19 @@ class Program
 
         var ml = new MLContext(seed);
 
-        var trainView = ml.Data.LoadFromEnumerable(
-            train.Select(r => new ModelInput
-            {
-                Features = features.Select(f => r[f]).ToArray(),
-                Label = r[TARGET]
-            }));
+        var featureCount = features.Count;
+
+        var schemaDef = SchemaDefinition.Create(typeof(ModelInput));
+        schemaDef[nameof(ModelInput.Features)].ColumnType =
+            new VectorDataViewType(NumberDataViewType.Single, featureCount);
+
+        var trainData = train.Select(r => new ModelInput
+        {
+            Features = features.Select(f => r[f]).ToArray(),
+            Label = r[TARGET]
+        });
+
+        var trainView = ml.Data.LoadFromEnumerable(trainData, schemaDef);
 
         var pipeline = ml.Regression.Trainers.Sdca(
             labelColumnName: "Label",
@@ -222,7 +238,7 @@ class Program
 
     class ModelInput
     {
-        [VectorType(9)]   // <-- set correct feature count
+        [VectorType]   // <-- set correct feature count
         public float[] Features { get; set; } = default!;
         public float Label { get; set; }
     }
