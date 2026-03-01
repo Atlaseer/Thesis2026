@@ -206,9 +206,16 @@ class Program
         {
             Features = features.Select(f => r[f]).ToArray(),
             Label = r[TARGET]
-        });
+        }).ToList();
+
+        var testData = test.Select(r => new ModelInput
+        {
+            Features = features.Select(f => r[f]).ToArray(),
+            Label = r[TARGET]
+        }).ToList();
 
         var trainView = ml.Data.LoadFromEnumerable(trainData, schemaDef);
+        var testView = ml.Data.LoadFromEnumerable(testData, schemaDef);
 
         var pipeline = ml.Regression.Trainers.Sdca(
             labelColumnName: "Label",
@@ -219,13 +226,6 @@ class Program
         var model = pipeline.Fit(trainView);
 
         double trainMs = NowMs() - t1;
-
-        var testView = ml.Data.LoadFromEnumerable(
-            test.Select(r => new ModelInput
-            {
-                Features = features.Select(f => r[f]).ToArray(),
-                Label = r[TARGET]
-            }));
 
         double t2 = NowMs();
 
