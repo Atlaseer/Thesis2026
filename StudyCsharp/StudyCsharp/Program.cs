@@ -28,8 +28,8 @@ class Program
     };
 
 
-    static double NowMs() =>
-        Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
+    static double NowNs() =>
+        Stopwatch.GetTimestamp() * 1_000_000_000.0 / Stopwatch.Frequency;
 
     // Entry point which runs the experiment: load, clean, select features, 
     // then for each subset size: 
@@ -51,7 +51,7 @@ class Program
 
         Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
 
-        var (data, features, loadMs, cleanMs) =
+        var (data, features, LoadNs, CleanNs) =
             LoadCleanAndSelect(csvPath);
 
         var results = new List<ResultRow>();
@@ -69,32 +69,32 @@ class Program
             {
                 var times = SplitTrainInfer(subset, features, testSize, seed);
 
-                double preprocess = cleanMs + times.SplitMs;
-                double total = loadMs + cleanMs +
-                               times.SplitMs + times.TrainMs + times.InferMs;
+                double preprocess = CleanNs + times.SplitNs;
+                double total = LoadNs + CleanNs +
+                               times.SplitNs + times.TrainNs + times.InferNs;
 
                 results.Add(new ResultRow
                 {
                     SubsetSize = nEff,
                     Repeat = r,
-                    TrainMs = times.TrainMs,
-                    InferMs = times.InferMs,
-                    SplitMs = times.SplitMs,
-                    TotalMs = total,
-                    PreprocessMs = preprocess,
+                    TrainNs = times.TrainNs,
+                    InferNs = times.InferNs,
+                    SplitNs = times.SplitNs,
+                    TotalNs = total,
+                    PreprocessNs = preprocess,
                     NFeatures = features.Count
                 });
             }
         }
 
         using var writer = new StreamWriter(outPath);
-        writer.WriteLine("subset_size,repeat,n_features,split_ms,train_ms,infer_ms,preprocess_ms,total_ms");
+        writer.WriteLine("subset_size,repeat,n_features,split_ns,train_ns,infer_ns,preprocess_ns,total_ns");
 
         foreach (var r in results)
         {
             writer.WriteLine($"{r.SubsetSize},{r.Repeat},{r.NFeatures}," +
-                             $"{r.SplitMs},{r.TrainMs},{r.InferMs}," +
-                             $"{r.PreprocessMs},{r.TotalMs}");
+                             $"{r.SplitNs},{r.TrainNs},{r.InferNs}," +
+                             $"{r.PreprocessNs},{r.TotalNs}");
         }
 
         var meta = new
@@ -122,7 +122,7 @@ class Program
     static (List<Dictionary<string, float>>, List<string>, double, double)
         LoadCleanAndSelect(string path)
     {
-        double t0 = NowMs();
+        double t0 = NowNs();
 
         List<Dictionary<string, float>> rows;
 
@@ -158,9 +158,9 @@ class Program
             }).ToList();
         }
 
-        double loadMs = NowMs() - t0;
+        double LoadNs = NowNs() - t0;
 
-        double t1 = NowMs();
+        double t1 = NowNs();
 
         rows = rows
             .Where(r => BASE_FEATURES.Append(TARGET)
@@ -174,19 +174,19 @@ class Program
             .Where(f => rows.Select(r => r[f]).Distinct().Count() > 1)
             .ToList();
 
-        double cleanMs = NowMs() - t1;
+        double CleanNs = NowNs() - t1;
 
-        return (rows, features, loadMs, cleanMs);
+        return (rows, features, LoadNs, CleanNs);
     }
 
-    static (double SplitMs, double TrainMs, double InferMs)
+    static (double SplitNs, double TrainNs, double InferNs)
         SplitTrainInfer(
         List<Dictionary<string, float>> data,
         List<string> features,
         float testSize,
         int seed)
     {
-        double t0 = NowMs();
+        double t0 = NowNs();
 
         var rnd = new Random(seed);
         var shuffled = data.OrderBy(_ => rnd.Next()).ToList();
@@ -196,7 +196,7 @@ class Program
         var train = shuffled.Take(splitIndex).ToList();
         var test = shuffled.Skip(splitIndex).ToList();
 
-        double splitMs = NowMs() - t0;
+        double SplitNs = NowNs() - t0;
 
         var ml = new MLContext(seed);
 
@@ -225,19 +225,19 @@ class Program
             labelColumnName: "Label",
             featureColumnName: "Features");
 
-        double t1 = NowMs();
+        double t1 = NowNs();
 
         var model = pipeline.Fit(trainView);
 
-        double trainMs = NowMs() - t1;
+        double TrainNs = NowNs() - t1;
 
-        double t2 = NowMs();
+        double t2 = NowNs();
 
         var predictions = model.Transform(testView);
 
-        double inferMs = NowMs() - t2;
+        double InferNs = NowNs() - t2;
 
-        return (splitMs, trainMs, inferMs);
+        return (SplitNs, TrainNs, InferNs);
     }
 
     class ModelInput
@@ -252,10 +252,10 @@ class Program
         public int SubsetSize;
         public int Repeat;
         public int NFeatures;
-        public double SplitMs;
-        public double TrainMs;
-        public double InferMs;
-        public double PreprocessMs;
-        public double TotalMs;
+        public double SplitNs;
+        public double TrainNs;
+        public double InferNs;
+        public double PreprocessNs;
+        public double TotalNs;
     }
 }

@@ -28,7 +28,7 @@ BASE_FEATURES = [
 ]
 
 
-def now_ms() -> float:
+def now_ns() -> float:
     """High-resolution monotonic time in milliseconds (good for timing phases)."""
     return perf_counter_ns() / 1_000_000.0
 
@@ -123,18 +123,18 @@ def load_clean_and_select_features(
 ) -> tuple[pd.DataFrame, list[str], float, float]:
     """
     Load the CSV, apply deterministic cleaning, and return:
-      (clean_df, features_used, load_ms, clean_ms)
+      (clean_df, features_used, load_ns, clean_ns)
 
     I time loading separately from cleaning so I can report phase timings later.
     """
     # Load timing: start before reading the CSV, stop right after it’s in memory.
-    t0 = now_ms()
+    t0 = now_ns()
     df = pd.read_csv(csv_path)
-    t1 = now_ms()
-    load_ms = t1 - t0
+    t1 = now_ns()
+    load_ns = t1 - t0
 
     # Cleaning timing starts here.
-    t2 = now_ms()
+    t2 = now_ns()
 
     # Drop exact duplicates (even if I don’t expect any, it keeps the pipeline explicit).
     df = df.drop_duplicates(ignore_index=True)
@@ -167,10 +167,10 @@ def load_clean_and_select_features(
     const = detect_constant_numeric_cols(df, features)
     features = [c for c in features if c not in const]
 
-    t3 = now_ms()
-    clean_ms = t3 - t2
+    t3 = now_ns()
+    clean_ns = t3 - t2
 
-    return df.reset_index(drop=True), features, load_ms, clean_ms
+    return df.reset_index(drop=True), features, load_ns, clean_ns
 
 
 def split_train_infer_times(
@@ -182,11 +182,11 @@ def split_train_infer_times(
 ) -> dict:
     """
     Time three phases on an in-memory subset:
-      - split_ms: build X/y and do train/test split
-      - train_ms: fit the regression model
-      - infer_ms: predict on the test set
+      - split_ns: build X/y and do train/test split
+      - train_ns: fit the regression model
+      - infer_ns: predict on the test set
     """
-    t0 = now_ms()
+    t0 = now_ns()
 
     # Materialize numeric arrays. float64 keeps types consistent.
     X = sub[features].to_numpy(dtype=np.float64, copy=False)
@@ -195,19 +195,19 @@ def split_train_infer_times(
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, random_state=seed
     )
-    t1 = now_ms()
+    t1 = now_ns()
 
     model = LinearRegression()
     model.fit(X_train, y_train)
-    t2 = now_ms()
+    t2 = now_ns()
 
     _ = model.predict(X_test)
-    t3 = now_ms()
+    t3 = now_ns()
 
     return {
-        "split_ms": t1 - t0,
-        "train_ms": t2 - t1,
-        "infer_ms": t3 - t2,
+        "split_ns": t1 - t0,
+        "train_ns": t2 - t1,
+        "infer_ns": t3 - t2,
     }
 
 
@@ -259,7 +259,7 @@ def main() -> None:
             "Provide positive integers in --sizes (comma-separated).")
 
     # Load + clean once so I don’t mix scaling effects with repeated disk I/O/cache effects.
-    df_clean, features, load_ms, clean_ms = load_clean_and_select_features(
+    df_clean, features, load_ns, clean_ns = load_clean_and_select_features(
         csv_path,
         derive_network_asymmetry=args.derive_network_asymmetry,
     )
@@ -293,9 +293,9 @@ def main() -> None:
             times = split_train_infer_times(
                 sub, features, test_size=args.test_size, seed=split_seed)
 
-            preprocess_ms = clean_ms + times["split_ms"]
-            total_ms = load_ms + clean_ms + \
-                times["split_ms"] + times["train_ms"] + times["infer_ms"]
+            preprocess_ns = clean_ns + times["split_ns"]
+            total_ns = load_ns + clean_ns + \
+                times["split_ns"] + times["train_ns"] + times["infer_ns"]
 
             rows.append(
                 {
@@ -308,13 +308,13 @@ def main() -> None:
                     "seed": int(args.seed),
                     "split_seed": int(split_seed),
                     "test_size": float(args.test_size),
-                    "load_ms": float(load_ms),
-                    "clean_ms": float(clean_ms),
-                    "split_ms": float(times["split_ms"]),
-                    "preprocess_ms": float(preprocess_ms),
-                    "train_ms": float(times["train_ms"]),
-                    "infer_ms": float(times["infer_ms"]),
-                    "total_ms": float(total_ms),
+                    "load_ns": float(load_ns),
+                    "clean_ns": float(clean_ns),
+                    "split_ns": float(times["split_ns"]),
+                    "preprocess_ns": float(preprocess_ns),
+                    "train_ns": float(times["train_ns"]),
+                    "infer_ns": float(times["infer_ns"]),
+                    "total_ns": float(total_ns),
                     "stratify_by_target": bool(args.stratify_by_target),
                     "derive_network_asymmetry": bool(args.derive_network_asymmetry),
                     "vary_split_per_repeat": bool(args.vary_split_per_repeat),
@@ -340,7 +340,7 @@ def main() -> None:
         "rows_after_cleaning": int(len(df_clean)),
         "notes": {
             "constant_features_dropped": "I drop any numeric feature with nunique<=1 (e.g., skill_complementarity_score was constant in my checks).",
-            "total_ms_definition": "total_ms = load_ms + clean_ms + split_ms + train_ms + infer_ms",
+            "total_ns_definition": "total_ns = load_ns + clean_ns + split_ns + train_ns + infer_ns",
             "load_clean_timed_once": "I time loading/cleaning once per run to avoid mixing scaling results with disk/cache effects.",
         },
     }
