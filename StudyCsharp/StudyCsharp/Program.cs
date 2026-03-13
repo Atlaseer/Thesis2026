@@ -13,6 +13,7 @@ class Program
 {
     const string TARGET = "compatibility_score";
 
+    // Base features to load and consider (will drop constant ones later)
     static readonly string[] BASE_FEATURES =
     {
         "skill_match_score",
@@ -30,6 +31,9 @@ class Program
     static double NowMs() =>
         Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
 
+    // Entry point which runs the experiment: load, clean, select features, 
+    // then for each subset size: 
+    // warmup, then repeat: split, train, infer, and record timings.
     static void Main(string[] args)
     {
         var solutionRoot = Directory.GetCurrentDirectory();
@@ -39,7 +43,7 @@ class Program
         int seed = 42;
         float testSize = 0.2f;
         int[] sizes = { 5000, 10000, 25000, 50000 };
-        int repeats = 10;
+        int repeats = 100;
         int warmup = 1;
 
         if (!File.Exists(csvPath))

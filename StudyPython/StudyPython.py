@@ -232,7 +232,7 @@ def main() -> None:
         default="5000,10000,25000,50000",
         help="Comma-separated subset sizes",
     )
-    ap.add_argument("--repeats", type=int, default=10)
+    ap.add_argument("--repeats", type=int, default=100)
     ap.add_argument("--warmup", type=int, default=1)
 
     ap.add_argument("--stratify-by-target", action="store_true")
