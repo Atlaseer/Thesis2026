@@ -12,8 +12,10 @@ using System.Text.Json;
 class Program
 {
     const string TARGET = "compatibility_score";
-
+    // ---------------------------------------------------------------------------------
     // Base features to load and consider (will drop constant ones later)
+    // ---------------------------------------------------------------------------------
+
     static readonly string[] BASE_FEATURES =
     {
         "skill_match_score",
@@ -30,29 +32,36 @@ class Program
 
     static double NowNs() =>
         Stopwatch.GetTimestamp() * 1_000_000_000.0 / Stopwatch.Frequency;
-
+    // ---------------------------------------------------------------------------------
     // Entry point which runs the experiment: load, clean, select features, 
     // then for each subset size: 
     // warmup, then repeat: split, train, infer, and record timings.
+    // ---------------------------------------------------------------------------------
     static void Main(string[] args)
     {
         var solutionRoot = Directory.GetCurrentDirectory();
         string csvPath = @"C:\Code\Thesis\data\compatibility_pairs.csv";
-        string outPath = "results/csharp_timings.csv";
-
         int seed = 42;
         float testSize = 0.2f;
-        int[] sizes = { 5000, 10000, 25000, 50000 };
-        int repeats = 100;
+        int repeats = 5;
         int warmup = 1;
 
         if (!File.Exists(csvPath))
             throw new FileNotFoundException(csvPath);
-
-        Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
-
+        Console.WriteLine("Loading and preprocessing data...");
         var (data, features, LoadNs, CleanNs) =
             LoadCleanAndSelect(csvPath);
+        Console.WriteLine("Preprocessing done.");
+
+        var percentages = new double[] { 1.0, 0.75, 0.5, 0.25, 0.10 };
+
+        var sizes = percentages
+            .Select(p => (int)(data.Count * p))
+            .ToArray();
+        string outDir = "results";
+        string outPath = Path.Combine(outDir, "csharp_timings.csv");
+
+        Directory.CreateDirectory(outDir);
 
         var results = new List<ResultRow>();
 
@@ -61,7 +70,7 @@ class Program
             int nEff = Math.Min(n, data.Count);
             var subset = data.Take(nEff).ToList();
 
-            Console.WriteLine($"Total rows: {data.Count}");
+            Console.WriteLine($"Running subset size: {nEff}");
             for (int w = 0; w < warmup; w++)
                 SplitTrainInfer(subset, features, testSize, seed);
 
@@ -120,56 +129,95 @@ class Program
     }
 
     static (List<Dictionary<string, float>>, List<string>, double, double)
-        LoadCleanAndSelect(string path)
+   LoadCleanAndSelect(string path)
     {
         double t0 = NowNs();
 
         List<Dictionary<string, float>> rows;
 
-        using (var reader = new StreamReader(path))
-        using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
+        using var reader = new StreamReader(path);
+        using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
+
+        var records = csv.GetRecords<dynamic>().ToList();
+
+        // ---------------------------------------------------------------------------------
+        // 1. Numeric coercion
+        // ---------------------------------------------------------------------------------
+        rows = records.Select(r =>
         {
-            var records = csv.GetRecords<dynamic>().ToList();
+            var raw = (IDictionary<string, object>)r;
+            var dict = new Dictionary<string, float>();
 
-            rows = records.Select(r =>
+            foreach (var f in BASE_FEATURES.Append(TARGET))
             {
-                var rowDict = (IDictionary<string, object>)r;
+                if (!raw.TryGetValue(f, out var val)) continue;
 
-                var dict = new Dictionary<string, float>();
+                var str = val?.ToString()?.Trim();
 
-                foreach (var f in BASE_FEATURES.Append(TARGET))
+                if (float.TryParse(
+                    str,
+                    NumberStyles.Any,
+                    CultureInfo.InvariantCulture,
+                    out float num))
                 {
-                    if (rowDict.TryGetValue(f, out var raw))
-                    {
-                        var str = raw?.ToString()?.Trim();
-
-                        if (float.TryParse(
-                                str,
-                                NumberStyles.Any,
-                                CultureInfo.InvariantCulture,
-                                out float val))
-                        {
-                            dict[f] = val;
-                        }
-                    }
+                    dict[f] = num;
                 }
+            }
 
-                return dict;
-            }).ToList();
-        }
+            return dict;
+
+        }).ToList();
 
         double LoadNs = NowNs() - t0;
 
         double t1 = NowNs();
 
+        // ---------------------------------------------------------------------------------
+        // 2. NaN filtering
+        // ---------------------------------------------------------------------------------
         rows = rows
-            .Where(r => BASE_FEATURES.Append(TARGET)
-            .All(c => r.ContainsKey(c)))
+            .Where(r =>
+                BASE_FEATURES.Append(TARGET)
+                .All(f =>
+                    r.ContainsKey(f) &&
+                    !float.IsNaN(r[f]) &&
+                    !float.IsInfinity(r[f])))
             .ToList();
 
-        var features = BASE_FEATURES.ToList();
+        // ---------------------------------------------------------------------------------
+        // 3. Drop duplicates
+        // ---------------------------------------------------------------------------------
+        rows = rows
+            .GroupBy(r =>
+                string.Join("|",
+                    BASE_FEATURES.Append(TARGET)
+                    .Select(f => r[f])))
+            .Select(g => g.First())
+            .ToList();
 
-        // Drop constant features
+        // ---------------------------------------------------------------------------------
+        // 4. Optional feature engineering
+        // ---------------------------------------------------------------------------------
+
+        foreach (var r in rows)
+        {
+            r["network_total"] =
+                r["network_value_a_to_b"] +
+                r["network_value_b_to_a"];
+
+            r["skill_synergy"] =
+                r["skill_match_score"] *
+                r["skill_complementarity_score"];
+        }
+
+        var features = BASE_FEATURES
+            .Append("network_total")
+            .Append("skill_synergy")
+            .ToList();
+
+        // ---------------------------------------------------------------------------------
+        // 5. Remove constant features
+        // ---------------------------------------------------------------------------------
         features = features
             .Where(f => rows.Select(r => r[f]).Distinct().Count() > 1)
             .ToList();
@@ -188,9 +236,8 @@ class Program
     {
         double t0 = NowNs();
 
-        var rnd = new Random(seed);
+        var rnd = new Random(seed + Environment.TickCount);
         var shuffled = data.OrderBy(_ => rnd.Next()).ToList();
-
         int splitIndex = (int)(shuffled.Count * (1 - testSize));
 
         var train = shuffled.Take(splitIndex).ToList();

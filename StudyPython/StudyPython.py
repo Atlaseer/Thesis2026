@@ -8,6 +8,7 @@ from time import perf_counter_ns
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor
 from sklearn.model_selection import train_test_split
 
 # Target column name.
@@ -29,8 +30,8 @@ BASE_FEATURES = [
 
 
 def now_ns() -> float:
-    """High-resolution monotonic time in milliseconds (good for timing phases)."""
-    return perf_counter_ns() / 1_000_000.0
+    """High-resolution monotonic time in nanoseconds (good for timing phases)."""
+    return perf_counter_ns()
 
 
 def detect_constant_numeric_cols(df: pd.DataFrame, cols: list[str]) -> list[str]:
@@ -293,7 +294,7 @@ def main() -> None:
             times = split_train_infer_times(
                 sub, features, test_size=args.test_size, seed=split_seed)
 
-            preprocess_ns = clean_ns + times["split_ns"]
+            preprocess_ns = load_ns + clean_ns + times["split_ns"]
             total_ns = load_ns + clean_ns + \
                 times["split_ns"] + times["train_ns"] + times["infer_ns"]
 
