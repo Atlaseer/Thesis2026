@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import json
 from pathlib import Path
@@ -180,6 +179,7 @@ def split_train_infer_times(
     *,
     test_size: float,
     seed: int,
+    model_type: str,
 ) -> dict:
     """
     Time three phases on an in-memory subset:
@@ -198,7 +198,15 @@ def split_train_infer_times(
     )
     t1 = now_ns()
 
-    model = LinearRegression()
+    if model_type == "linear":
+        model = LinearRegression()
+
+    elif model_type == "tree":
+        model = DecisionTreeRegressor(random_state=seed)
+
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+
     model.fit(X_train, y_train)
     t2 = now_ns()
 
@@ -220,7 +228,7 @@ def main() -> None:
     and compare directly against the C# implementation.
     """
     ap = argparse.ArgumentParser(
-        description="Python linear regression timing experiment (phased, reproducible)."
+        description="Python regression timing experiment (phased, reproducible)."
     )
 
     ap.add_argument("--csv", type=str, default="data/compatibility_pairs.csv")
@@ -233,6 +241,7 @@ def main() -> None:
         default="5000,10000,25000,50000",
         help="Comma-separated subset sizes",
     )
+
     ap.add_argument("--repeats", type=int, default=100)
     ap.add_argument("--warmup", type=int, default=1)
 
@@ -254,73 +263,114 @@ def main() -> None:
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    sizes = [int(s.strip()) for s in args.sizes.split(",") if s.strip()]
-    if not sizes or any(s <= 0 for s in sizes):
-        raise ValueError(
-            "Provide positive integers in --sizes (comma-separated).")
-
     # Load + clean once so I don’t mix scaling effects with repeated disk I/O/cache effects.
     df_clean, features, load_ns, clean_ns = load_clean_and_select_features(
         csv_path,
         derive_network_asymmetry=args.derive_network_asymmetry,
     )
+    total_rows = len(df_clean)
+
+    sizes = [
+
+        int(total_rows * 0.10),
+        int(total_rows * 0.25),
+
+    ]
+    """
+    sizes = [
+        int(total_rows * 1.00),
+        int(total_rows * 0.75),
+        int(total_rows * 0.50),
+        int(total_rows * 0.25),
+        int(total_rows * 0.10),
+    ]
+"""
+    if not sizes or any(s <= 0 for s in sizes):
+        raise ValueError(
+            "Provide positive integers in --sizes (comma-separated).")
+
+    models = ["linear", "tree"]
 
     rows: list[dict] = []
 
     for n in sizes:
+
         n_eff = min(int(n), int(len(df_clean)))
 
-        # Deterministic subset selection.
+        # create subset
         if args.stratify_by_target:
             sub = stratified_subsample_by_target(
-                df_clean, n_eff, TARGET, seed=args.seed)
+                df_clean, n_eff, TARGET, seed=args.seed
+            )
         else:
             sub = df_clean.sample(
-                n=n_eff, random_state=args.seed).reset_index(drop=True)
+                n=n_eff, random_state=args.seed
+            ).reset_index(drop=True)
 
-        # Warmup runs to reduce one-time allocation/caching noise (not recorded).
-        for w in range(args.warmup):
-            _ = split_train_infer_times(
-                sub,
-                features,
-                test_size=args.test_size,
-                seed=(args.seed + w) if args.vary_split_per_repeat else args.seed,
-            )
+        for model in models:
 
-        # Measured repeats.
-        for r in range(args.repeats):
-            split_seed = (
-                args.seed + r) if args.vary_split_per_repeat else args.seed
-            times = split_train_infer_times(
-                sub, features, test_size=args.test_size, seed=split_seed)
+            # warmup
+            for w in range(args.warmup):
+                _ = split_train_infer_times(
+                    sub,
+                    features,
+                    test_size=args.test_size,
+                    seed=(args.seed + w) if args.vary_split_per_repeat else args.seed,
+                    model_type=model,
+                )
 
-            preprocess_ns = load_ns + clean_ns + times["split_ns"]
-            total_ns = load_ns + clean_ns + \
-                times["split_ns"] + times["train_ns"] + times["infer_ns"]
+            # repeats
+            for r in range(args.repeats):
 
-            rows.append(
-                {
-                    "language": "python",
-                    "library": "scikit-learn",
-                    "model": "LinearRegression",
-                    "subset_size": int(n_eff),
-                    "repeat": int(r),
-                    "n_features": int(len(features)),
-                    "seed": int(args.seed),
-                    "split_seed": int(split_seed),
-                    "test_size": float(args.test_size),
-                    "load_ns": float(load_ns),
-                    "clean_ns": float(clean_ns),
-                    "split_ns": float(times["split_ns"]),
-                    "preprocess_ns": float(preprocess_ns),
-                    "train_ns": float(times["train_ns"]),
-                    "infer_ns": float(times["infer_ns"]),
-                    "total_ns": float(total_ns),
-                    "stratify_by_target": bool(args.stratify_by_target),
-                    "derive_network_asymmetry": bool(args.derive_network_asymmetry),
-                    "vary_split_per_repeat": bool(args.vary_split_per_repeat),
-                }
-            )
+                split_seed = (
+                    args.seed + r
+                    if args.vary_split_per_repeat
+                    else args.seed
+                )
+
+                # run model
+                times = split_train_infer_times(
+                    sub,
+                    features,
+                    test_size=args.test_size,
+                    seed=split_seed,
+                    model_type=model,
+                )
+
+                preprocess_ns = load_ns + clean_ns + times["split_ns"]
+
+                total_ns = (
+                    load_ns
+                    + clean_ns
+                    + times["split_ns"]
+                    + times["train_ns"]
+                    + times["infer_ns"]
+                )
+
+                # save result
+                rows.append(
+                    {
+                        "language": "python",
+                        "library": "scikit-learn",
+                        "model": model,
+                        "subset_size": int(n_eff),
+                        "repeat": int(r),
+                        "n_features": int(len(features)),
+                        "seed": int(args.seed),
+                        "split_seed": int(split_seed),
+                        "test_size": float(args.test_size),
+                        "load_ns": float(load_ns),
+                        "clean_ns": float(clean_ns),
+                        "split_ns": float(times["split_ns"]),
+                        "preprocess_ns": float(preprocess_ns),
+                        "train_ns": float(times["train_ns"]),
+                        "infer_ns": float(times["infer_ns"]),
+                        "total_ns": float(total_ns),
+                        "stratify_by_target": bool(args.stratify_by_target),
+                        "derive_network_asymmetry": bool(args.derive_network_asymmetry),
+                        "vary_split_per_repeat": bool(args.vary_split_per_repeat),
+                    }
+                )
 
     res = pd.DataFrame(rows)
     res.to_csv(out_path, index=False)
