@@ -270,6 +270,7 @@ def main() -> None:
     )
     total_rows = len(df_clean)
 
+    # Sets the subset sizes to test
     sizes = [
 
         int(total_rows * 0.10),
