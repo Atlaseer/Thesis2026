@@ -13,7 +13,7 @@ class Program
 {
     const string TARGET = "compatibility_score";
     // ---------------------------------------------------------------------------------
-    // Base features to load and consider (will drop constant ones later)
+    // Base features to load and consider 
     // ---------------------------------------------------------------------------------
 
     static readonly string[] BASE_FEATURES =
