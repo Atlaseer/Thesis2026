@@ -43,7 +43,7 @@ class Program
         string csvPath = @"C:\Code\Thesis\data\compatibility_pairs.csv";
         int seed = 42;
         float testSize = 0.2f;
-        int repeats = 5;
+        int repeats = 100;
         int warmup = 1;
 
         if (!File.Exists(csvPath))
@@ -236,7 +236,7 @@ class Program
     {
         double t0 = NowNs();
 
-        var rnd = new Random(seed + Environment.TickCount);
+        var rnd = new Random(seed);
         var shuffled = data.OrderBy(_ => rnd.Next()).ToList();
         int splitIndex = (int)(shuffled.Count * (1 - testSize));
 

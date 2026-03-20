@@ -249,7 +249,7 @@ def main() -> None:
     ap.add_argument("--derive-network-asymmetry", action="store_true")
 
     ap.add_argument(
-        "--vary-split-per-repeat",
+        # "--vary-split-per-repeat",
         action="store_true",
         help="If set, repeat r uses seed+r for the train/test split. Otherwise all repeats share the same split.",
     )
