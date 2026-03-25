@@ -9,11 +9,15 @@ using Microsoft.ML;
 using Microsoft.ML.Data;
 using System.Text.Json;
 
+// ----------------------------------------
+// Constants are matching the Python code
+// ----------------------------------------
+
 class Program
 {
     const string TARGET = "compatibility_score";
     // ---------------------------------------------------------------------------------
-    // Base features to load and consider 
+    // Uses 9 base features, no engineered features
     // ---------------------------------------------------------------------------------
 
     static readonly string[] BASE_FEATURES =
@@ -28,8 +32,15 @@ class Program
         "geographic_score",
         "seniority_match"
     };
+    // ---------------------------------------------------------------------------------
+    // Set dataset fractions to test
+    // ---------------------------------------------------------------------------------
 
+    static readonly double[] PERCENTAGES = { 1.00, 0.75, 0.50, 0.25, 0.10 };
 
+    // ---------------------------------------------------------------------------------
+    // Timing with 
+    //----------------------------------------------------------------------------------
     static double NowNs() =>
         Stopwatch.GetTimestamp() * 1_000_000_000.0 / Stopwatch.Frequency;
     // ---------------------------------------------------------------------------------
@@ -39,21 +50,21 @@ class Program
     // ---------------------------------------------------------------------------------
     static void Main(string[] args)
     {
-        var solutionRoot = Directory.GetCurrentDirectory();
         string csvPath = @"C:\Code\Thesis\data\compatibility_pairs.csv";
         int seed = 42;
         float testSize = 0.2f;
         int repeats = 100;
         int warmup = 1;
 
+        // Check if file exists
         if (!File.Exists(csvPath))
-            throw new FileNotFoundException(csvPath);
+            throw new FileNotFoundException($"CSV not found: {csvPath}");
+
         Console.WriteLine("Loading and preprocessing data...");
         var (data, features, LoadNs, CleanNs) =
             LoadCleanAndSelect(csvPath);
         Console.WriteLine("Preprocessing done.");
 
-        var percentages = new double[] { 1.0, 0.75, 0.5, 0.25, 0.10 };
 
         var sizes = percentages
             .Select(p => (int)(data.Count * p))
