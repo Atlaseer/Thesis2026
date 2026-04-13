@@ -12,6 +12,7 @@ from sklearn.model_selection import train_test_split
 
 # Target column name.
 TARGET = "compatibility_score"
+# print("Numpy version is: ", np.__version__)
 
 # Numeric feature columns I allow the model to use.
 # I list them explicitly so I don’t accidentally include IDs/text columns or any extra fields.
