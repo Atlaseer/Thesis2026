@@ -44,6 +44,13 @@ class Program
     //----------------------------------------------------------------------------------
     static double NowNs() =>
         Stopwatch.GetTimestamp() * 1_000_000_000.0 / Stopwatch.Frequency;
+    
+    static long GetRssBytes()
+    {
+        var proc = Process.GetCurrentProcess();
+        proc.Refresh();  // Required — WorkingSet64 caches stale values without this
+        return proc.WorkingSet64;
+    }
     // ---------------------------------------------------------------------------------
     // Entry point which runs the experiment: load, clean, select features, 
     // then for each subset size: 
@@ -54,7 +61,7 @@ class Program
         string csvPath = @"C:\Code\Thesis\data\compatibility_pairs.csv";
         int seed = 42;
         float testSize = 0.2f;
-        int repeats = 100;
+        int repeats = 10;
         int warmup = 1;
 
         // Check if file exists

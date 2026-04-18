@@ -4,6 +4,12 @@ import json
 from pathlib import Path
 from time import perf_counter_ns
 
+# Import for measurements
+import tracemalloc
+import psutil
+import os
+
+# Imports for ML models
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
@@ -182,18 +188,11 @@ def split_train_infer_times(
     seed: int,
     model_type: str,
 ) -> dict:
-    """
-    Time three phases on an in-memory subset:
-      - split_ns: build X/y and do train/test split
-      - train_ns: fit the regression model
-      - infer_ns: predict on the test set
-    """
-    t0 = now_ns()
+    process = psutil.Process(os.getpid())
 
-    # Materialize numeric arrays. float64 keeps types consistent.
+    t0 = now_ns()
     X = sub[features].to_numpy(dtype=np.float64, copy=False)
     y = sub[TARGET].to_numpy(dtype=np.float64, copy=False)
-
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, random_state=seed
     )
@@ -201,23 +200,37 @@ def split_train_infer_times(
 
     if model_type == "linear":
         model = LinearRegression()
-
     elif model_type == "tree":
         model = DecisionTreeRegressor(random_state=seed)
-
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
+    # --- Train phase with memory ---
+    rss_before_train = process.memory_info().rss
+    tracemalloc.start()
     model.fit(X_train, y_train)
     t2 = now_ns()
+    train_heap_current, train_heap_peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    rss_after_train = process.memory_info().rss
 
+    # --- Infer phase with memory ---
+    rss_before_infer = process.memory_info().rss
+    tracemalloc.start()
     _ = model.predict(X_test)
     t3 = now_ns()
+    infer_heap_current, infer_heap_peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    rss_after_infer = process.memory_info().rss
 
     return {
         "split_ns": t1 - t0,
         "train_ns": t2 - t1,
         "infer_ns": t3 - t2,
+        "train_heap_peak_bytes": train_heap_peak,
+        "train_rss_delta_bytes": rss_after_train - rss_before_train,
+        "infer_heap_peak_bytes": infer_heap_peak,
+        "infer_rss_delta_bytes": rss_after_infer - rss_before_infer,
     }
 
 
@@ -243,14 +256,14 @@ def main() -> None:
         help="Comma-separated subset sizes",
     )
 
-    ap.add_argument("--repeats", type=int, default=100)
+    ap.add_argument("--repeats", type=int, default=5)
     ap.add_argument("--warmup", type=int, default=1)
 
     ap.add_argument("--stratify-by-target", action="store_true")
     ap.add_argument("--derive-network-asymmetry", action="store_true")
 
     ap.add_argument(
-        # "--vary-split-per-repeat",
+        "--vary-split-per-repeat",
         action="store_true",
         help="If set, repeat r uses seed+r for the train/test split. Otherwise all repeats share the same split.",
     )
@@ -272,13 +285,7 @@ def main() -> None:
     total_rows = len(df_clean)
 
     # Sets the subset sizes to test
-    sizes = [
 
-        int(total_rows * 0.10),
-        int(total_rows * 0.25),
-
-    ]
-    """
     sizes = [
         int(total_rows * 1.00),
         int(total_rows * 0.75),
@@ -286,7 +293,6 @@ def main() -> None:
         int(total_rows * 0.25),
         int(total_rows * 0.10),
     ]
-"""
     if not sizes or any(s <= 0 for s in sizes):
         raise ValueError(
             "Provide positive integers in --sizes (comma-separated).")
@@ -371,6 +377,10 @@ def main() -> None:
                         "stratify_by_target": bool(args.stratify_by_target),
                         "derive_network_asymmetry": bool(args.derive_network_asymmetry),
                         "vary_split_per_repeat": bool(args.vary_split_per_repeat),
+                        "train_heap_peak_bytes": float(times["train_heap_peak_bytes"]),
+                        "train_rss_delta_bytes": float(times["train_rss_delta_bytes"]),
+                        "infer_heap_peak_bytes": float(times["infer_heap_peak_bytes"]),
+                        "infer_rss_delta_bytes": float(times["infer_rss_delta_bytes"]),
                     }
                 )
 
