@@ -8,6 +8,7 @@ using CsvHelper;
 using Microsoft.ML;
 using Microsoft.ML.Data;
 using Microsoft.ML.Trainers.FastTree;
+using Microsoft.ML.Trainers;
 using System.Text.Json;
 
 // ----------------------------------------
@@ -189,7 +190,7 @@ class Program
     }
 
     // Load, clean and select features
-    static (List<Dictionary<string, float>>, List<string>, double, double)
+    static (List<Dictionary<string, double>>, List<string>, double, double)
    LoadCleanAndSelect(string path)
     {
         // Load phase
@@ -283,23 +284,25 @@ class Program
 
         var schemaDef = SchemaDefinition.Create(typeof(ModelInput));
         schemaDef[nameof(ModelInput.Features)].ColumnType =
-            new VectorDataViewType(NumberDataViewType.Double, featureCount);
+            new VectorDataViewType(NumberDataViewType.Single, featureCount);
 
         var trainData = train.Select(r => new ModelInput
         {
-            Features = features.Select(f => r[f]).ToArray(),
-            Label = r[TARGET],
+            Features = features.Select(f => (float)r[f]).ToArray(), 
+            Label = (float)r[TARGET],                               
         }).ToList();
 
         var testData = test.Select(r => new ModelInput
         {
-            Features = features.Select(f => r[f]).ToArray(),
-            Label = r[TARGET],
+            Features = features.Select(f => (float)r[f]).ToArray(), 
+            Label = (float)r[TARGET],
         }).ToList();
 
         var trainView = ml.Data.LoadFromEnumerable(trainData, schemaDef);
         var testView = ml.Data.LoadFromEnumerable(testData, schemaDef);
 
+        double t1 = 0;
+        ITransformer model;
         if (modelType == "linear")
         {
             var pipeline = ml.Regression.Trainers.Ols(
@@ -333,14 +336,14 @@ class Program
         double t2 = NowNs();
         model.Transform(testView);
         double inferNs = NowNs() - t2;
-        return (SplitNs, TrainNs, InferNs);
+        return (SplitNs, TrainNs, inferNs);
     }
 
     class ModelInput
     {
         [VectorType]
-        public double[] Features { get; set; } = default!;
-        public double Label { get; set; }
+        public float[] Features { get; set; } = default!;
+        public float Label { get; set; }
     }
 
     class ResultRow
