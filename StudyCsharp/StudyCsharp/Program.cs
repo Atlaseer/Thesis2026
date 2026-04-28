@@ -167,7 +167,7 @@ class Program
         using (var writer = new StreamWriter(outPath))
         {
             writer.WriteLine(
-                "language,library,model,subset_size,repeat,n_features,seed,split_seed,test_size," +
+                "language,library,model,subset_size,repeat,n_features,seed,split_seed,test_size,load_ns,clean_ns,split_ns,preprocess_ns,train_ns,infer_ns,total_ns" +
                 "load_ns,load_heap_net_bytes,load_rss_delta_bytes," +
                 "clean_ns,clean_heap_net_bytes,clean_rss_delta_bytes," +
                 "split_ns,split_heap_net_bytes,split_rss_delta_bytes," +
@@ -180,18 +180,28 @@ class Program
 
             foreach (var row in results)
             {
+                var ci = CultureInfo.InvariantCulture;
                 writer.WriteLine(
-                    $"{row.Language},{row.Library},{row.Model}," +
-                    $"{row.SubsetSize},{row.Repeat},{row.NFeatures}," +
-                    $"{row.Seed},{row.SplitSeed},{row.TestSize:F2}," +
-                    $"{row.LoadNs},{row.LoadHeapDeltaBytes},{row.LoadRssDeltaBytes}," +
-                    $"{row.CleanNs},{row.CleanHeapDeltaBytes},{row.CleanRssDeltaBytes}," +
-                    $"{row.SplitNs},{row.SplitHeapDeltaBytes},{row.SplitRssDeltaBytes}," +
-                    $"{row.PreprocessNs}," +
-                    $"{row.TrainNs},{row.TrainHeapDeltaBytes},{row.TrainRssDeltaBytes}," +
-                    $"{row.InferNs},{row.InferHeapDeltaBytes},{row.InferRssDeltaBytes}," +
-                    $"{row.TotalNs}," +
-                    $"False,False,False");
+                    string.Join(",", new object[]
+                    {
+                        row.Language,
+                        row.Library,
+                        row.Model,
+                        row.SubsetSize,
+                        row.Repeat,
+                        row.NFeatures,
+                        row.Seed,
+                        row.SplitSeed,
+                        row.TestSize.ToString(ci),
+                        row.LoadNs.ToString(ci),
+                        row.CleanNs.ToString(ci),
+                        row.SplitNs.ToString(ci),
+                        row.PreprocessNs.ToString(ci),
+                        row.TrainNs.ToString(ci),
+                        row.InferNs.ToString(ci),
+                        row.TotalNs.ToString(ci)
+                    })
+                );
             }
         }
 

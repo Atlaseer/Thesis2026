@@ -55,3 +55,6 @@ plt.legend()
 plt.xscale("log")
 plt.savefig("results/infer_time.png")
 plt.close()
+
+print(df.columns)
+print(df.head())
