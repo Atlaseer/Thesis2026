@@ -39,7 +39,7 @@ class Program
     // ---------------------------------------------------------------------------------
     // Set dataset fractions to test
     // ---------------------------------------------------------------------------------
-    static readonly double[] PERCENTAGES = {0.50, 0.25, 0.10 };
+    static readonly double[] PERCENTAGES = {0.25, 0.10 };
     
     //static readonly double[] PERCENTAGES = { 1.00, 0.75, 0.50, 0.25, 0.10 };
 
@@ -167,7 +167,7 @@ class Program
         using (var writer = new StreamWriter(outPath))
         {
             writer.WriteLine(
-                "language,library,model,subset_size,repeat,n_features,seed,split_seed,test_size,load_ns,clean_ns,split_ns,preprocess_ns,train_ns,infer_ns,total_ns" +
+                "language,library,model,subset_size,repeat,n_features,seed,split_seed,test_size," +
                 "load_ns,load_heap_net_bytes,load_rss_delta_bytes," +
                 "clean_ns,clean_heap_net_bytes,clean_rss_delta_bytes," +
                 "split_ns,split_heap_net_bytes,split_rss_delta_bytes," +
@@ -175,8 +175,7 @@ class Program
                 "train_ns,train_heap_net_bytes,train_rss_delta_bytes," +
                 "infer_ns,infer_heap_net_bytes,infer_rss_delta_bytes," +
                 "total_ns," +
-                "stratify_by_target,derive_network_asymmetry,vary_split_per_repeat"
-                    );
+                "stratify_by_target,derive_network_asymmetry,vary_split_per_repeat");
 
             foreach (var row in results)
             {
@@ -192,14 +191,27 @@ class Program
                         row.NFeatures,
                         row.Seed,
                         row.SplitSeed,
-                        row.TestSize.ToString(ci),
+                        row.TestSize.ToString("F2", ci),
                         row.LoadNs.ToString(ci),
+                        row.LoadHeapDeltaBytes.ToString(ci),
+                        row.LoadRssDeltaBytes.ToString(ci),
                         row.CleanNs.ToString(ci),
+                        row.CleanHeapDeltaBytes.ToString(ci),
+                        row.CleanRssDeltaBytes.ToString(ci),
                         row.SplitNs.ToString(ci),
+                        row.SplitHeapDeltaBytes.ToString(ci),
+                        row.SplitRssDeltaBytes.ToString(ci),
                         row.PreprocessNs.ToString(ci),
                         row.TrainNs.ToString(ci),
+                        row.TrainHeapDeltaBytes.ToString(ci),
+                        row.TrainRssDeltaBytes.ToString(ci),
                         row.InferNs.ToString(ci),
-                        row.TotalNs.ToString(ci)
+                        row.InferHeapDeltaBytes.ToString(ci),
+                        row.InferRssDeltaBytes.ToString(ci),
+                        row.TotalNs.ToString(ci),
+                        row.StratifyByTarget,
+                        row.DeriveNetworkAsymmetry,
+                        row.VarySpiltPerRepeat,
                     })
                 );
             }
