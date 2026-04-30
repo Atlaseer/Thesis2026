@@ -38,7 +38,7 @@ plt.ylabel("Train time (s)")
 plt.title("Train Time vs Dataset Size")
 plt.legend()
 plt.xscale("log")
-plt.savefig("results/train_time.png")
+plt.savefig("results/python_train_time.png")
 plt.close()
 
 # -------- Plot 3: Inference time --------

@@ -372,17 +372,20 @@ class Program
         var trainView = ml.Data.LoadFromEnumerable(
             train.Select(r => new ModelInput
             {
-                Features = features.Select(f => (float)r[f]).ToArray(),
+                Features = features.Select(f => r.ContainsKey(f) ? (float)r[f] : 0f).ToArray(),
                 Label = (float)r[TARGET],
             }), schemaDef);
 
         var testView = ml.Data.LoadFromEnumerable(
             test.Select(r => new ModelInput
             {
-                Features = features.Select(f => (float)r[f]).ToArray(),
+                Features = features.Select(f => r.ContainsKey(f) ? (float)r[f] : 0f).ToArray(),
                 Label = (float)r[TARGET],
             }), schemaDef);
-
+        // Uses cached data instead of lazy execution
+        var trainCached = ml.Data.Cache(trainView);
+        var testCached  = ml.Data.Cache(testView);
+        
         // --- Train phase ---
         long   trainHeapBefore = GetHeapBytes();
         long   trainRssBefore  = GetRssBytes();
@@ -394,7 +397,7 @@ class Program
             model = ml.Regression.Trainers.Ols(
                 labelColumnName:   "Label",
                 featureColumnName: "Features")
-                .Fit(trainView);
+                .Fit(trainCached);
         }
         else if (modelType == "tree")
         {
@@ -404,7 +407,7 @@ class Program
                 numberOfTrees:              1,
                 numberOfLeaves:             checked((int)Math.Pow(2, 20)),
                 minimumExampleCountPerLeaf: 1)
-                .Fit(trainView);
+                .Fit(trainCached);
         }
         else
         {
@@ -420,7 +423,7 @@ class Program
         long   inferRssBefore  = GetRssBytes();
         double t2              = NowNs();
 
-        model.Transform(testView);
+        model.Transform(testCached);
 
         double inferNs      = NowNs() - t2;
         long inferHeapDelta = GetHeapBytes() - inferHeapBefore;
