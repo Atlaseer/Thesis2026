@@ -94,8 +94,8 @@ class Program
             = LoadCleanAndSelect(csvPath);
 
         Console.WriteLine($"Done. Rows: {data.Count}, features: [{string.Join(", ", features)}]");
-        Console.WriteLine($"  load : {loadNs  / 1e6:F0} ms | heap {loadHeapDelta  / 1024:+#;-#;0} KB | RSS {loadRssDelta  / 1024:+#;-#;0} KB");
-        Console.WriteLine($"  clean: {cleanNs / 1e6:F0} ms | heap {cleanHeapDelta / 1024:+#;-#;0} KB | RSS {cleanRssDelta / 1024:+#;-#;0} KB");
+        Console.WriteLine($"  load : {loadNs  / 1e6:F0} ns | heap {loadHeapDelta  / 1024:+#;-#;0} KB | RSS {loadRssDelta  / 1024:+#;-#;0} KB");
+        Console.WriteLine($"  clean: {cleanNs / 1e6:F0} ns | heap {cleanHeapDelta / 1024:+#;-#;0} KB | RSS {cleanRssDelta / 1024:+#;-#;0} KB");
 
         var sizes = PERCENTAGES.Select(p => Math.Max(1, (int)(data.Count * p))).ToArray();
 
@@ -150,6 +150,9 @@ class Program
                         SplitHeapDeltaBytes = t.SplitHeapDelta,
                         SplitRssDeltaBytes  = t.SplitRssDelta,
                         PreprocessNs        = preprocessNs,
+                        MaterialiseNs             = t.MaterialiseNs,
+                        MaterialiseHeapDeltaBytes = t.MaterialiseHeapDelta,
+                        MaterialiseRssDeltaBytes  = t.MaterialiseRssDelta,
                         TrainNs             = t.TrainNs,
                         TrainHeapDeltaBytes = t.TrainHeapDelta,
                         TrainRssDeltaBytes  = t.TrainRssDelta,
@@ -172,6 +175,7 @@ class Program
                 "clean_ns,clean_heap_net_bytes,clean_rss_delta_bytes," +
                 "split_ns,split_heap_net_bytes,split_rss_delta_bytes," +
                 "preprocess_ns," +
+                "materialise_ns,materialise_heap_net_bytes,materialise_rss_delta_bytes," +
                 "train_ns,train_heap_net_bytes,train_rss_delta_bytes," +
                 "infer_ns,infer_heap_net_bytes,infer_rss_delta_bytes," +
                 "total_ns," +
@@ -202,6 +206,9 @@ class Program
                         row.SplitHeapDeltaBytes.ToString(ci),
                         row.SplitRssDeltaBytes.ToString(ci),
                         row.PreprocessNs.ToString(ci),
+                        row.MaterialiseNs.ToString(ci),
+                        row.MaterialiseHeapDeltaBytes.ToString(ci),
+                        row.MaterialiseRssDeltaBytes.ToString(ci),
                         row.TrainNs.ToString(ci),
                         row.TrainHeapDeltaBytes.ToString(ci),
                         row.TrainRssDeltaBytes.ToString(ci),
@@ -330,9 +337,10 @@ class Program
     // Return type carrying timing + memory for all three phases.
     // -------------------------------------------------------------------------
     record PhaseResult(
-        double SplitNs, long SplitHeapDelta, long SplitRssDelta,
-        double TrainNs, long TrainHeapDelta, long TrainRssDelta,
-        double InferNs, long InferHeapDelta, long InferRssDelta);
+        double SplitNs,        long SplitHeapDelta,        long SplitRssDelta,
+        double MaterialiseNs,  long MaterialiseHeapDelta,  long MaterialiseRssDelta,
+        double TrainNs,        long TrainHeapDelta,        long TrainRssDelta,
+        double InferNs,        long InferHeapDelta,        long InferRssDelta);
 
     // -------------------------------------------------------------------------
     // Split → Train → Infer. Each phase is timed and memory-measured
@@ -382,10 +390,34 @@ class Program
                 Features = features.Select(f => r.ContainsKey(f) ? (float)r[f] : 0f).ToArray(),
                 Label = (float)r[TARGET],
             }), schemaDef);
-        // Uses cached data instead of lazy execution
+        // --- Materialise phase ---
+        // ml.Data.Cache() is itself lazy — it only populates its internal buffer
+        // on the FIRST enumeration, which would otherwise happen inside Fit(),
+        // wrongly charging data-copy cost to train_ns.
+        //
+        // Fix: call Cache(), then force a full pass through both views by iterating
+        // every row cursor BEFORE the train timer starts. This loads all data into
+        // the cache buffer so Fit() measures only model fitting, not data copying.
+        //
+        // materialise_ns is recorded separately so it can be reported and excluded
+        // from the train comparison against Python (which has no equivalent step —
+        // its numpy arrays are already fully in memory before fit() is called).
         var trainCached = ml.Data.Cache(trainView);
         var testCached  = ml.Data.Cache(testView);
-        
+
+        long   matHeapBefore = GetHeapBytes();
+        long   matRssBefore  = GetRssBytes();
+        double tMat          = NowNs();
+
+        using (var cursor = trainCached.GetRowCursor(trainCached.Schema))
+            while (cursor.MoveNext()) { }
+        using (var cursor = testCached.GetRowCursor(testCached.Schema))
+            while (cursor.MoveNext()) { }
+
+        double materialiseNs      = NowNs() - tMat;
+        long   materialiseHeapDelta = GetHeapBytes() - matHeapBefore;
+        long   materialiseRssDelta  = GetRssBytes()  - matRssBefore;
+
         // --- Train phase ---
         long   trainHeapBefore = GetHeapBytes();
         long   trainRssBefore  = GetRssBytes();
@@ -430,9 +462,10 @@ class Program
         long inferRssDelta  = GetRssBytes()  - inferRssBefore;
 
         return new PhaseResult(
-            splitNs, splitHeapDelta, splitRssDelta,
-            trainNs, trainHeapDelta, trainRssDelta,
-            inferNs, inferHeapDelta, inferRssDelta);
+            splitNs,       splitHeapDelta,       splitRssDelta,
+            materialiseNs, materialiseHeapDelta, materialiseRssDelta,
+            trainNs,       trainHeapDelta,       trainRssDelta,
+            inferNs,       inferHeapDelta,       inferRssDelta);
     }
 
     class ModelInput
@@ -470,6 +503,10 @@ class Program
         public long   SplitRssDeltaBytes;
         // Aggregate
         public double PreprocessNs;
+        // Materialise (IDataView cache population — excluded from train comparison)
+        public double MaterialiseNs;
+        public long   MaterialiseHeapDeltaBytes;
+        public long   MaterialiseRssDeltaBytes;
         // Train
         public double TrainNs;
         public long   TrainHeapDeltaBytes;
