@@ -299,9 +299,9 @@ def main() -> None:
 
     print(f"Rows after cleaning: {total_rows}, features: {features}")
     print(
-        f"  load : {load_ns/1e6:.0f} ms | heap peak {preproc_metrics['load_heap_peak_bytes']/1024:.0f} KB | RSS Δ {preproc_metrics['load_rss_delta_bytes']/1024:.0f} KB")
+        f"  load : {load_ns/1e6:.0f} ns | heap peak {preproc_metrics['load_heap_peak_bytes']/1024:.0f} KB | RSS Δ {preproc_metrics['load_rss_delta_bytes']/1024:.0f} KB")
     print(
-        f"  clean: {clean_ns/1e6:.0f} ms | heap peak {preproc_metrics['clean_heap_peak_bytes']/1024:.0f} KB | RSS Δ {preproc_metrics['clean_rss_delta_bytes']/1024:.0f} KB")
+        f"  clean: {clean_ns/1e6:.0f} ns | heap peak {preproc_metrics['clean_heap_peak_bytes']/1024:.0f} KB | RSS Δ {preproc_metrics['clean_rss_delta_bytes']/1024:.0f} KB")
 
     sizes = [
         # int(total_rows * 1.00),
