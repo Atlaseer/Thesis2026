@@ -437,8 +437,8 @@ class Program
                 labelColumnName:            "Label",
                 featureColumnName:          "Features",
                 numberOfTrees:              1,
-                numberOfLeaves:             checked((int)Math.Pow(2, 20)),
-                minimumExampleCountPerLeaf: 1)
+                numberOfLeaves:             2048,        // Changed from 1048576 — should reduce time dramatically
+                minimumExampleCountPerLeaf: 5   )
                 .Fit(trainCached);
         }
         else
