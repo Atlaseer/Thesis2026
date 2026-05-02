@@ -93,9 +93,9 @@ class Program
              cleanNs, cleanHeapDelta, cleanRssDelta)
             = LoadCleanAndSelect(csvPath);
 
-        Console.WriteLine($"Done. Rows: {data.Count}, features: [{string.Join(", ", features)}]");
-        Console.WriteLine($"  load : {loadNs / 1e6:F0} ns | heap {loadHeapDelta / 1024:+#;-#;0} KB | RSS {loadRssDelta / 1024:+#;-#;0} KB");
-        Console.WriteLine($"  clean: {cleanNs / 1e6:F0} ns | heap {cleanHeapDelta / 1024:+#;-#;0} KB | RSS {cleanRssDelta / 1024:+#;-#;0} KB");
+        Console.WriteLine($"Done. Rows after cleaning: {data.Count}, features: [{string.Join(", ", features)}]");
+        Console.WriteLine($"  load time: {loadNs / 1e6:F0} ns | heap {loadHeapDelta / 1024:+#;-#;0} KB | RSS {loadRssDelta / 1024:+#;-#;0} KB");
+        Console.WriteLine($"  clean time: {cleanNs / 1e6:F0} ns | heap {cleanHeapDelta / 1024:+#;-#;0} KB | RSS {cleanRssDelta / 1024:+#;-#;0} KB");
 
         var sizes = PERCENTAGES.Select(p => Math.Max(1, (int)(data.Count * p))).ToArray();
 
@@ -179,13 +179,13 @@ class Program
         {
             writer.WriteLine(
                 "language,library,model,subset_size,repeat,n_features,seed,split_seed,test_size," +
-                "load_ns,load_heap_net_bytes,load_rss_delta_bytes," +
-                "clean_ns,clean_heap_net_bytes,clean_rss_delta_bytes," +
-                "split_ns,split_heap_net_bytes,split_rss_delta_bytes," +
+                "load_ns,load_heap_peak_bytes,load_rss_delta_bytes," +
+                "clean_ns,clean_heap_peak_bytes,clean_rss_delta_bytes," +
+                "split_ns,split_heap_peak_bytes,split_rss_delta_bytes," +
                 "preprocess_ns," +
-                "materialise_ns,materialise_heap_net_bytes,materialise_rss_delta_bytes," +
-                "train_ns,train_heap_net_bytes,train_rss_delta_bytes," +
-                "infer_ns,infer_heap_net_bytes,infer_rss_delta_bytes," +
+                "materialise_ns,materialise_heap_peak_bytes,materialise_rss_delta_bytes," +
+                "train_ns,train_heap_peak_bytes,train_rss_delta_bytes," +
+                "infer_ns,infer_heap_peak_bytes,infer_rss_delta_bytes," +
                 "total_ns," +
                 "stratify_by_target,derive_network_asymmetry,vary_split_per_repeat");
 
@@ -314,17 +314,17 @@ class Program
         double t1 = NowNs();
 
         var allCols = BASE_FEATURES.Append(TARGET).ToArray();
-
+        
+        // Drop exact duplicate rows
+        rows = rows
+                //Now loads all the columns just like python
+                .GroupBy(r => string.Join("|", r.OrderBy(kv => kv.Key).Select(kv => kv.Value)))
+                .Select(g => g.First())
+                .ToList();
         // Drop rows with missing/NaN/Values
         rows = rows
             .Where(r => allCols.All(f =>
-                r.ContainsKey(f) && !double.IsNaN(r[f])))
-            .ToList();
-
-        // Drop exact duplicate rows
-        rows = rows
-            .GroupBy(r => string.Join("|", allCols.Select(f => r[f])))
-            .Select(g => g.First())
+                r.ContainsKey(f) && !double.IsNaN(r[f]) && !double.IsInfinity(r[f])))
             .ToList();
 
         // Drop constant features (nunique <= 1)

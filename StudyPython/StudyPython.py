@@ -160,6 +160,7 @@ def load_clean_and_select_features(
     phase_metrics contains timing and memory for the load and clean phases.
     """
     # --- Load phase ---
+    print("Cleaning and loading data")
     (df,), load_ns, load_heap_peak, load_rss_delta = _measure(
         lambda: (pd.read_csv(csv_path),)
     )
@@ -176,6 +177,9 @@ def load_clean_and_select_features(
 
         model_cols = BASE_FEATURES + [TARGET]
         df_num = df[model_cols].apply(pd.to_numeric, errors="coerce")
+        # Removed infinite values which can otherwise cause issues
+        df_num = df_num.replace([np.inf, -np.inf], np.nan)
+
         df_ = df.loc[df_num.notna().all(axis=1)].copy()
         df_[model_cols] = df_num.loc[df_.index]
 
