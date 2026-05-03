@@ -278,7 +278,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--test-size",  type=float, default=0.2)
     ap.add_argument("--repeats",    type=int,   default=5)
-    ap.add_argument("--warmup",     type=int,   default=1)
+    ap.add_argument("--warmup",     type=int,   default=0)
     ap.add_argument("--stratify-by-target",      action="store_true")
     ap.add_argument("--derive-network-asymmetry", action="store_true")
     ap.add_argument("--vary-split-per-repeat",    action="store_true")

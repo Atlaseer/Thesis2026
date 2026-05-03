@@ -82,7 +82,7 @@ class Program
         int seed = 42;
         float testSize = 0.2f;
         int repeats = 5;
-        int warmup = 1;
+        int warmup = 0;
 
         if (!File.Exists(csvPath))
             throw new FileNotFoundException($"CSV not found: {csvPath}");
@@ -273,73 +273,81 @@ class Program
     // Load CSV and clean data. Measures time + memory for each phase separately.
     // -------------------------------------------------------------------------
     static (List<Dictionary<string, double>> data,
-            List<string> features,
-            double loadNs, long loadHeapDelta, long loadRssDelta,
-            double cleanNs, long cleanHeapDelta, long cleanRssDelta)
+        List<string> features,
+        double loadNs, long loadHeapDelta, long loadRssDelta,
+        double cleanNs, long cleanHeapDelta, long cleanRssDelta)
         LoadCleanAndSelect(string path)
     {
-        // --- Load phase ---
-        long heapBefore = GetHeapBytes();
-        long rssBefore = GetRssBytes();
-        double t0 = NowNs();
+    // --- Load phase ---
+    long heapBefore = GetHeapBytes();
+    long rssBefore  = GetRssBytes();
+    double t0       = NowNs();
 
-        List<Dictionary<string, double>> rows;
-        using (var reader = new StreamReader(path))
-        using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
+    List<Dictionary<string, string>> rawRows;
+    using (var reader = new StreamReader(path))
+    using (var csv    = new CsvReader(reader, CultureInfo.InvariantCulture))
+    {
+        var records = csv.GetRecords<dynamic>().ToList();
+        rawRows = records.Select(r =>
         {
-            var records = csv.GetRecords<dynamic>().ToList();
-            rows = records.Select(r =>
-            {
-                var raw = (IDictionary<string, object>)r;
-                var dict = new Dictionary<string, double>();
-                foreach (var f in BASE_FEATURES.Append(TARGET))
-                {
-                    if (!raw.TryGetValue(f, out var val)) continue;
-                    var str = val?.ToString()?.Trim();
-                    if (double.TryParse(str, NumberStyles.Any,
-                                        CultureInfo.InvariantCulture, out double num))
-                        dict[f] = num;
-                }
-                return dict;
-            }).ToList();
-        }
-
-        double loadNs = NowNs() - t0;
-        long loadHeapDelta = GetHeapBytes() - heapBefore;
-        long loadRssDelta = GetRssBytes() - rssBefore;
-
-        // --- Clean phase ---
-        long heapBefore2 = GetHeapBytes();
-        long rssBefore2 = GetRssBytes();
-        double t1 = NowNs();
-
-        var allCols = BASE_FEATURES.Append(TARGET).ToArray();
-        
-        // Drop exact duplicate rows
-        rows = rows
-                //Now loads all the columns just like python
-                .GroupBy(r => string.Join("|", r.OrderBy(kv => kv.Key).Select(kv => kv.Value)))
-                .Select(g => g.First())
-                .ToList();
-        // Drop rows with missing/NaN/Values
-        rows = rows
-            .Where(r => allCols.All(f =>
-                r.ContainsKey(f) && !double.IsNaN(r[f]) && !double.IsInfinity(r[f])))
-            .ToList();
-
-        // Drop constant features (nunique <= 1)
-        var features = BASE_FEATURES
-            .Where(f => rows.Select(r => r[f]).Distinct().Count() > 1)
-            .ToList();
-
-        double cleanNs = NowNs() - t1;
-        long cleanHeapDelta = GetHeapBytes() - heapBefore2;
-        long cleanRssDelta = GetRssBytes() - rssBefore2;
-
-        return (rows, features,
-                loadNs, loadHeapDelta, loadRssDelta,
-                cleanNs, cleanHeapDelta, cleanRssDelta);
+            var raw = (IDictionary<string, object>)r;
+            // Store every column as a raw string — no parsing, no filtering
+            return raw.ToDictionary(kv => kv.Key, kv => kv.Value?.ToString()?.Trim() ?? "");
+        }).ToList();
     }
+
+    double loadNs      = NowNs() - t0;
+    long loadHeapDelta = GetHeapBytes() - heapBefore;
+    long loadRssDelta  = GetRssBytes()  - rssBefore;
+
+    // --- Clean phase ---
+    long   heapBefore2 = GetHeapBytes();
+    long   rssBefore2  = GetRssBytes();
+    double t1          = NowNs();
+
+    var allCols = BASE_FEATURES.Append(TARGET).ToArray();
+
+    // Dedup on ALL columns first — mirrors Python's df.drop_duplicates() on the full DataFrame
+    rawRows = rawRows
+        .GroupBy(r => string.Join("|", r.OrderBy(kv => kv.Key).Select(kv => kv.Value)))
+        .Select(g => g.First())
+        .ToList();
+
+    // Parse model columns only, dropping rows where any field fails to parse,
+    // is NaN, or is Infinity — mirrors Python's to_numeric(errors="coerce") + notna()
+    var rows = rawRows
+        .Select(r =>
+        {
+            var dict = new Dictionary<string, double>();
+            foreach (var f in allCols)
+            {
+                if (!r.TryGetValue(f, out var str)
+                    || !double.TryParse(str, NumberStyles.Any,
+                                        CultureInfo.InvariantCulture, out double num)
+                    || double.IsNaN(num)
+                    || double.IsInfinity(num))
+                    return null; // coerce failure → drop row
+                dict[f] = num;
+            }
+            return dict;
+        })
+        .Where(r => r != null)
+        .Select(r => r!)
+        .ToList();
+
+    // Drop constant features (nunique <= 1) — same as Python's detect_constant_numeric_cols
+    var features = BASE_FEATURES
+        .Where(f => rows.Select(r => r[f]).Distinct().Count() > 1)
+        .ToList();
+
+    double cleanNs      = NowNs() - t1;
+    long cleanHeapDelta = GetHeapBytes() - heapBefore2;
+    long cleanRssDelta  = GetRssBytes()  - rssBefore2;
+
+    return (rows, features,
+            loadNs,  loadHeapDelta,  loadRssDelta,
+            cleanNs, cleanHeapDelta, cleanRssDelta);
+}
 
     // -------------------------------------------------------------------------
     // Return type carrying timing + memory for all three phases.
