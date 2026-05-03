@@ -168,6 +168,8 @@ class Program
                         InferHeapDeltaBytes = t.InferHeapDelta,
                         InferRssDeltaBytes = t.InferRssDelta,
                         TotalNs = totalNs,
+                        R2 = t.R2,
+                        Rmse = t.Rmse,
                     });
                 }
             }
@@ -187,6 +189,8 @@ class Program
                 "train_ns,train_heap_peak_bytes,train_rss_delta_bytes," +
                 "infer_ns,infer_heap_peak_bytes,infer_rss_delta_bytes," +
                 "total_ns," +
+                "r2," +
+                "rmse," +
                 "stratify_by_target,derive_network_asymmetry,vary_split_per_repeat");
 
             foreach (var row in results)
@@ -224,6 +228,8 @@ class Program
                         row.InferHeapDeltaBytes.ToString(ci),
                         row.InferRssDeltaBytes.ToString(ci),
                         row.TotalNs.ToString(ci),
+                        row.R2.ToString("F6", ci),
+                        row.Rmse.ToString("F6", ci),
                         row.StratifyByTarget,
                         row.DeriveNetworkAsymmetry,
                         row.VarySpiltPerRepeat,
@@ -258,6 +264,8 @@ class Program
                 bug_fix_load_ns = "Previously load_ns stored a raw Stopwatch.GetTimestamp() value (~2e16). Now correctly stores elapsed ns.",
                 bug_fix_test_size = "Previously test_size serialised as '0' (missing format specifier). Now uses :F2.",
                 bug_fix_csv_columns = "Previously memory columns existed in ResultRow but were absent from the CSV header and writer rows.",
+                r2 = "R² (coefficient of determination) from ml.Regression.Evaluate(), computed on the test set after inference, outside timed blocks.",
+                rmse = "Root Mean Squared Error on the test set, computed outside timed blocks.",
             }
         };
 
@@ -356,7 +364,7 @@ class Program
         double SplitNs, long SplitHeapDelta, long SplitRssDelta,
         double MaterialiseNs, long MaterialiseHeapDelta, long MaterialiseRssDelta,
         double TrainNs, long TrainHeapDelta, long TrainRssDelta,
-        double InferNs, long InferHeapDelta, long InferRssDelta);
+        double InferNs, long InferHeapDelta, long InferRssDelta, double R2, double Rmse);
 
     // -------------------------------------------------------------------------
     // PrepareViews: create MLContext, cached views, force materialisation.
@@ -493,12 +501,18 @@ class Program
         double inferNs = NowNs() - t2;
         long inferHeapDelta = GetHeapBytes() - inferHeapBefore;
         long inferRssDelta = GetRssBytes() - inferRssBefore;
+        
+        // --- Accuracy (R²) — computed outside timed blocks so it does not affect timing ---
+        var metrics = ml.Regression.Evaluate(predView, labelColumnName: "Label", scoreColumnName: "Score");
+        double r2 = metrics.RSquared;
+        double rmse = metrics.RootMeanSquaredError;
+
 
         return new PhaseResult(
             splitNs, splitHeapDelta, splitRssDelta,
             materialiseNs, materialiseHeapDelta, materialiseRssDelta,
             trainNs, trainHeapDelta, trainRssDelta,
-            inferNs, inferHeapDelta, inferRssDelta);
+            inferNs, inferHeapDelta, inferRssDelta, r2, rmse);
     }
 
     class ModelOutput
@@ -555,5 +569,8 @@ class Program
         public long InferRssDeltaBytes;
         // Total
         public double TotalNs;
+        // Accuracy
+        public double R2;
+        public double Rmse;
     }
 }

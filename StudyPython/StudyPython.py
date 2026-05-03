@@ -15,6 +15,7 @@ import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score, root_mean_squared_error
 
 # Target column name.
 TARGET = "compatibility_score"
@@ -236,7 +237,7 @@ def split_train_infer(
         y = sub[TARGET].to_numpy(dtype=np.float32, copy=False)
         return train_test_split(X, y, test_size=test_size, random_state=seed)
 
-    (X_train, X_test, y_train, _), split_ns, split_heap, split_rss = _measure(_split)
+    (X_train, X_test, y_train, y_test), split_ns, split_heap, split_rss = _measure(_split)
 
     # --- Train phase ---
     if model_type == "linear":
@@ -250,7 +251,12 @@ def split_train_infer(
         lambda: mdl.fit(X_train, y_train))
 
     # --- Infer phase ---
-    _, infer_ns, infer_heap, infer_rss = _measure(lambda: mdl.predict(X_test))
+    (y_pred,), infer_ns, infer_heap, infer_rss = _measure(
+        lambda: (mdl.predict(X_test),))
+
+    # --- Accuracy (R²) — computed outside timed blocks so it does not affect timing ---
+    r2 = float(r2_score(y_test, y_pred))
+    rmse = float(root_mean_squared_error(y_test, y_pred))
 
     return {
         "split_ns":             float(split_ns),
@@ -262,6 +268,9 @@ def split_train_infer(
         "infer_ns":             float(infer_ns),
         "infer_heap_peak_bytes": float(infer_heap),
         "infer_rss_delta_bytes": float(infer_rss),
+        "r2":                   r2,
+        "rmse": rmse,
+
     }
 
 
@@ -278,7 +287,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--test-size",  type=float, default=0.2)
     ap.add_argument("--repeats",    type=int,   default=5)
-    ap.add_argument("--warmup",     type=int,   default=0)
+    ap.add_argument("--warmup",     type=int,   default=1)
     ap.add_argument("--stratify-by-target",      action="store_true")
     ap.add_argument("--derive-network-asymmetry", action="store_true")
     ap.add_argument("--vary-split-per-repeat",    action="store_true")
@@ -390,6 +399,9 @@ def main() -> None:
                     "infer_rss_delta_bytes": float(t["infer_rss_delta_bytes"]),
                     # Total
                     "total_ns": float(total_ns),
+                    # Accuracy
+                    "r2": float(t["r2"]),
+                    "rmse": float(t["rmse"]),
                     # Flags
                     "stratify_by_target":      bool(args.stratify_by_target),
                     "derive_network_asymmetry": bool(args.derive_network_asymmetry),
@@ -419,6 +431,8 @@ def main() -> None:
             "heap_peak_bytes":     "tracemalloc peak during the phase. Python-managed heap only — undercounts NumPy/C buffers.",
             "rss_delta_bytes":     "psutil RSS change during the phase. OS physical RAM. Best cross-language comparison metric.",
             "constant_features":   "Features with nunique<=1 are dropped (e.g. skill_complementarity_score).",
+            "r2":                  "R² (coefficient of determination) computed on the test set after inference, outside timed blocks.",
+            "rmse": "Root Mean Squared Error on the test set, computed outside timed blocks.",
         },
     }
 
