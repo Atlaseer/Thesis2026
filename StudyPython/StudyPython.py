@@ -356,7 +356,7 @@ def main() -> None:
         f"  clean: {clean_ns/1e6:.2f} ms | heap peak {preproc_metrics['clean_heap_peak_bytes']/1024:.0f} KB | RSS Δ {preproc_metrics['clean_rss_delta_bytes']/1024:.0f} KB")
 
     sizes = [
-        # int(total_rows * 1.00),
+        int(total_rows * 1.00),
         int(total_rows * 0.75),
         int(total_rows * 0.50),
         int(total_rows * 0.25),

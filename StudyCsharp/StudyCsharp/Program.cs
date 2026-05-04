@@ -39,7 +39,7 @@ class Program
     // ---------------------------------------------------------------------------------
     // Set dataset fractions to test
     // ---------------------------------------------------------------------------------
-    static readonly double[] PERCENTAGES = { 0.75, 0.50, 0.25, 0.10 };
+    static readonly double[] PERCENTAGES = { 1.00, 0.75, 0.50, 0.25, 0.10 };
 
     //static readonly double[] PERCENTAGES = { 1.00, 0.75, 0.50, 0.25, 0.10 };
 
