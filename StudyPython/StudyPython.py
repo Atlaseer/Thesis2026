@@ -3,6 +3,7 @@ import argparse
 import json
 from pathlib import Path
 from time import perf_counter_ns
+from time import sleep
 
 # Import for measurements
 import tracemalloc
@@ -274,9 +275,47 @@ def split_train_infer(
     }
 
 
+def _measure(fn):
+    """
+    Run fn() while recording:
+      - elapsed wall-clock nanoseconds
+      - tracemalloc heap peak (Python-managed allocations only)
+      - RSS peak (highest WorkingSet observed during fn(), polled every 5 ms)
+        Matches C#'s PeakRssBytesDuring — comparable across languages.
+    Returns (result, elapsed_ns, heap_peak_bytes, rss_peak_bytes).
+    """
+    import threading
+
+    rss_peak = 0
+    done = False
+
+    def _poll():
+        nonlocal rss_peak, done
+        while not done:
+            sample = _rss()
+            if sample > rss_peak:
+                rss_peak = sample
+            sleep(0.005)  # 5 ms — matches C# Thread.Sleep(5)
+
+    tracemalloc.start()
+    t0 = now_ns()
+
+    poller = threading.Thread(target=_poll, daemon=True)
+    poller.start()
+
+    result = fn()
+
+    elapsed_ns = now_ns() - t0
+    _, heap_peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    done = True
+    poller.join()
+
+    return result, elapsed_ns, heap_peak, rss_peak
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(
@@ -312,14 +351,14 @@ def main() -> None:
 
     print(f"Rows after cleaning: {total_rows}, features: {features}")
     print(
-        f"  load : {load_ns/1e6:.0f} ns | heap peak {preproc_metrics['load_heap_peak_bytes']/1024:.0f} KB | RSS Δ {preproc_metrics['load_rss_delta_bytes']/1024:.0f} KB")
+        f"  load : {load_ns/1e6:.2f} ms | heap peak {preproc_metrics['load_heap_peak_bytes']/1024:.0f} KB | RSS Δ {preproc_metrics['load_rss_delta_bytes']/1024:.0f} KB")
     print(
-        f"  clean: {clean_ns/1e6:.0f} ns | heap peak {preproc_metrics['clean_heap_peak_bytes']/1024:.0f} KB | RSS Δ {preproc_metrics['clean_rss_delta_bytes']/1024:.0f} KB")
+        f"  clean: {clean_ns/1e6:.2f} ms | heap peak {preproc_metrics['clean_heap_peak_bytes']/1024:.0f} KB | RSS Δ {preproc_metrics['clean_rss_delta_bytes']/1024:.0f} KB")
 
     sizes = [
         # int(total_rows * 1.00),
-        # int(total_rows * 0.75),
-        # int(total_rows * 0.50),
+        int(total_rows * 0.75),
+        int(total_rows * 0.50),
         int(total_rows * 0.25),
         int(total_rows * 0.10),
     ]
@@ -363,7 +402,10 @@ def main() -> None:
                 )
 
                 preprocess_ns = load_ns + clean_ns + t["split_ns"]
-                total_ns = preprocess_ns + t["train_ns"] + t["infer_ns"]
+                pipeline_ns = t["split_ns"] + t["train_ns"] + \
+                    t["infer_ns"]  # repeatable phases only
+                total_ns = preprocess_ns + \
+                    t["train_ns"] + t["infer_ns"]  # kept for reference
 
                 rows.append({
                     "language":  "python",
@@ -389,6 +431,7 @@ def main() -> None:
                     "split_rss_delta_bytes": float(t["split_rss_delta_bytes"]),
                     # Aggregate
                     "preprocess_ns": float(preprocess_ns),
+                    "pipeline_ns": float(pipeline_ns),
                     # Train phase
                     "train_ns":              float(t["train_ns"]),
                     "train_heap_peak_bytes": float(t["train_heap_peak_bytes"]),

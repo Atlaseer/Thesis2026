@@ -39,7 +39,7 @@ class Program
     // ---------------------------------------------------------------------------------
     // Set dataset fractions to test
     // ---------------------------------------------------------------------------------
-    static readonly double[] PERCENTAGES = { 0.25, 0.10 };
+    static readonly double[] PERCENTAGES = { 0.75, 0.50, 0.25, 0.10 };
 
     //static readonly double[] PERCENTAGES = { 1.00, 0.75, 0.50, 0.25, 0.10 };
 
@@ -94,8 +94,8 @@ class Program
             = LoadCleanAndSelect(csvPath);
 
         Console.WriteLine($"Done. Rows after cleaning: {data.Count}, features: [{string.Join(", ", features)}]");
-        Console.WriteLine($"  load time: {loadNs / 1e6:F0} ns | heap {loadHeapDelta / 1024:+#;-#;0} KB | RSS {loadRssDelta / 1024:+#;-#;0} KB");
-        Console.WriteLine($"  clean time: {cleanNs / 1e6:F0} ns | heap {cleanHeapDelta / 1024:+#;-#;0} KB | RSS {cleanRssDelta / 1024:+#;-#;0} KB");
+        Console.WriteLine($"  load time: {loadNs / 1e6:F2} ms | heap {loadHeapDelta / 1024:+#;-#;0} KB | RSS {loadRssDelta / 1024:+#;-#;0} KB");
+        Console.WriteLine($"  clean time: {cleanNs / 1e6:F2} ms | heap {cleanHeapDelta / 1024:+#;-#;0} KB | RSS {cleanRssDelta / 1024:+#;-#;0} KB");
 
         var sizes = PERCENTAGES.Select(p => Math.Max(1, (int)(data.Count * p))).ToArray();
 
@@ -117,25 +117,18 @@ class Program
             {
                 Console.WriteLine($"  model={modelType}");
 
-                // FIX 3: PrepareViews called ONCE per (subset, modelType).
-                // MLContext creation + cache population happen here, not per repeat.
-                var (ml, trainCached, testCached, matNs, matHeap, matRss)
-                    = PrepareViews(subset, features, testSize, seed);
-                Console.WriteLine($"    materialise: {matNs / 1e6:F0} ms");
-
                 // Warmup — not recorded
                 for (int w = 0; w < warmup; w++)
-                    SplitTrainInfer(subset, features, testSize, seed, modelType,
-                                    ml, trainCached, testCached);
+                    SplitTrainInfer(subset, features, testSize, seed, modelType);
 
                 for (int r = 0; r < repeats; r++)
                 {
-                    var t = SplitTrainInfer(subset, features, testSize, seed, modelType,
-                                            ml, trainCached, testCached);
+                    var t = SplitTrainInfer(subset, features, testSize, seed, modelType);
 
                     // preprocess_ns = load + clean + split (mirrors Python definition)
                     double preprocessNs = loadNs + cleanNs + t.SplitNs;
-                    double totalNs = preprocessNs + t.TrainNs + t.InferNs;
+                    double pipelineNs   = t.SplitNs + t.TrainNs + t.InferNs;  // repeatable phases only
+                    double totalNs      = preprocessNs + t.TrainNs + t.InferNs; // kept for reference
 
                     results.Add(new ResultRow
                     {
@@ -158,9 +151,7 @@ class Program
                         SplitHeapDeltaBytes = t.SplitHeapDelta,
                         SplitRssDeltaBytes = t.SplitRssDelta,
                         PreprocessNs = preprocessNs,
-                        MaterialiseNs = matNs,
-                        MaterialiseHeapDeltaBytes = matHeap,
-                        MaterialiseRssDeltaBytes = matRss,
+                        PipelineNs = pipelineNs,
                         TrainNs = t.TrainNs,
                         TrainHeapDeltaBytes = t.TrainHeapDelta,
                         TrainRssDeltaBytes = t.TrainRssDelta,
@@ -185,7 +176,7 @@ class Program
                 "clean_ns,clean_heap_peak_bytes,clean_rss_delta_bytes," +
                 "split_ns,split_heap_peak_bytes,split_rss_delta_bytes," +
                 "preprocess_ns," +
-                "materialise_ns,materialise_heap_peak_bytes,materialise_rss_delta_bytes," +
+                "pipeline_ns," +
                 "train_ns,train_heap_peak_bytes,train_rss_delta_bytes," +
                 "infer_ns,infer_heap_peak_bytes,infer_rss_delta_bytes," +
                 "total_ns," +
@@ -218,9 +209,7 @@ class Program
                         row.SplitHeapDeltaBytes.ToString(ci),
                         row.SplitRssDeltaBytes.ToString(ci),
                         row.PreprocessNs.ToString(ci),
-                        row.MaterialiseNs.ToString(ci),
-                        row.MaterialiseHeapDeltaBytes.ToString(ci),
-                        row.MaterialiseRssDeltaBytes.ToString(ci),
+                        row.PipelineNs.ToString(ci),
                         row.TrainNs.ToString(ci),
                         row.TrainHeapDeltaBytes.ToString(ci),
                         row.TrainRssDeltaBytes.ToString(ci),
@@ -258,9 +247,10 @@ class Program
                 tree_model = "FastForest(numberOfTrees:1) — single unpruned tree. Matches Python DecisionTreeRegressor.",
                 preprocess_ns = "load_ns + clean_ns + split_ns",
                 total_ns = "load_ns + clean_ns + split_ns + train_ns + infer_ns",
+                split_ns = "Shuffle + partition + float32 conversion + ML.NET IDataView materialisation per repeat. Equivalent to Python's to_numpy() + train_test_split().",
                 load_clean_once = "Load and clean are timed once; their ns/heap/rss values are identical across all repeats.",
                 heap_delta_bytes = "GC.GetTotalMemory delta. Managed heap only — undercounts ML.NET native buffers (e.g. FastForest tree storage).",
-                rss_delta_bytes = "WorkingSet64 delta after proc.Refresh(). OS physical RAM — best cross-language comparison metric.",
+                rss_delta_bytes = "Peak WorkingSet64 polled every 5 ms during the phase (PeakRssBytesDuring). Captures native heap peaks (e.g. FastForest buffers) that a point-in-time snapshot misses. Comparable to Python psutil RSS.",
                 bug_fix_load_ns = "Previously load_ns stored a raw Stopwatch.GetTimestamp() value (~2e16). Now correctly stores elapsed ns.",
                 bug_fix_test_size = "Previously test_size serialised as '0' (missing format specifier). Now uses :F2.",
                 bug_fix_csv_columns = "Previously memory columns existed in ResultRow but were absent from the CSV header and writer rows.",
@@ -362,64 +352,9 @@ class Program
     // -------------------------------------------------------------------------
     record PhaseResult(
         double SplitNs, long SplitHeapDelta, long SplitRssDelta,
-        double MaterialiseNs, long MaterialiseHeapDelta, long MaterialiseRssDelta,
         double TrainNs, long TrainHeapDelta, long TrainRssDelta,
-        double InferNs, long InferHeapDelta, long InferRssDelta, double R2, double Rmse);
-
-    // -------------------------------------------------------------------------
-    // PrepareViews: create MLContext, cached views, force materialisation.
-    // Called ONCE per (subset, modelType) — not per repeat.
-    // -------------------------------------------------------------------------
-    static (MLContext ml, IDataView trainCached, IDataView testCached,
-            double materialiseNs, long materialiseHeapDelta, long materialiseRssDelta)
-        PrepareViews(
-            List<Dictionary<string, double>> data,
-            List<string> features,
-            float testSize,
-            int seed)
-    {
-        var ml = new MLContext(seed: seed);
-        var featureCount = features.Count;
-
-        var schemaDef = SchemaDefinition.Create(typeof(ModelInput));
-        schemaDef[nameof(ModelInput.Features)].ColumnType =
-            new VectorDataViewType(NumberDataViewType.Single, featureCount);
-
-        var rnd = new Random(seed);
-        var shuffled = data.OrderBy(_ => rnd.Next()).ToList();
-        int splitIdx = (int)(shuffled.Count * (1 - testSize));
-
-        var trainView = ml.Data.LoadFromEnumerable(
-            shuffled.Take(splitIdx).Select(r => new ModelInput
-            {
-                Features = features.Select(f => r.ContainsKey(f) ? (float)r[f] : 0f).ToArray(),
-                Label = (float)r[TARGET],
-            }), schemaDef);
-
-        var testView = ml.Data.LoadFromEnumerable(
-            shuffled.Skip(splitIdx).Select(r => new ModelInput
-            {
-                Features = features.Select(f => r.ContainsKey(f) ? (float)r[f] : 0f).ToArray(),
-                Label = (float)r[TARGET],
-            }), schemaDef);
-
-        var trainCached = ml.Data.Cache(trainView);
-        var testCached = ml.Data.Cache(testView);
-
-        long matHeap = GetHeapBytes();
-        long matRss = GetRssBytes();
-        double tMat = NowNs();
-
-        using (var cur = trainCached.GetRowCursor(trainCached.Schema))
-            while (cur.MoveNext()) { }
-        using (var cur = testCached.GetRowCursor(testCached.Schema))
-            while (cur.MoveNext()) { }
-
-        return (ml, trainCached, testCached,
-                NowNs() - tMat,
-                GetHeapBytes() - matHeap,
-                GetRssBytes() - matRss);
-    }
+        double InferNs, long InferHeapDelta, long InferRssDelta,
+        double R2, double Rmse);
 
     // -------------------------------------------------------------------------
     // Split → Train → Infer. Each phase is timed and memory-measured
@@ -430,77 +365,108 @@ class Program
         List<string> features,
         float testSize,
         int seed,
-        string modelType,
-        MLContext ml,
-        IDataView trainCached,
-        IDataView testCached)
+        string modelType)
     {
-        // --- Split phase ---
-        // Re-do the shuffle each repeat for timing parity with Python.
-        // The actual cached views (trainCached/testCached) come from PrepareViews.
+        var featureCount = features.Count;
+        var ml = new MLContext(seed: seed);
+
+        // --- Split phase: shuffle, partition, convert to float32, load into ML.NET ---
         long splitHeapBefore = GetHeapBytes();
-        long splitRssBefore = GetRssBytes();
         double t0 = NowNs();
 
-        var rnd = new Random(seed);
-        var shuffled = data.OrderBy(_ => rnd.Next()).ToList();
-        int splitIdx = (int)(shuffled.Count * (1 - testSize));
-        _ = shuffled.Take(splitIdx).ToList();
-        _ = shuffled.Skip(splitIdx).ToList();
+        IDataView trainCached = null!;
+        IDataView testCached  = null!;
+        long splitRssPeak = PeakRssBytesDuring(() =>
+        {
+            var rnd = new Random(seed);
+            var shuffled = data.OrderBy(_ => rnd.Next()).ToList();
+            int splitIdx = (int)(shuffled.Count * (1 - testSize));
+            var trainList = shuffled.Take(splitIdx).ToList();
+            var testList  = shuffled.Skip(splitIdx).ToList();
 
-        double splitNs = NowNs() - t0;
+            var schemaDef = SchemaDefinition.Create(typeof(ModelInput));
+            schemaDef[nameof(ModelInput.Features)].ColumnType =
+                new VectorDataViewType(NumberDataViewType.Single, featureCount);
+
+            var trainView = ml.Data.LoadFromEnumerable(
+                trainList.Select(r => new ModelInput {
+                    Features = features.Select(f => (float)r[f]).ToArray(),
+                    Label = (float)r[TARGET]
+                }), schemaDef);
+            var testView = ml.Data.LoadFromEnumerable(
+                testList.Select(r => new ModelInput {
+                    Features = features.Select(f => (float)r[f]).ToArray(),
+                    Label = (float)r[TARGET]
+                }), schemaDef);
+
+            // Force materialisation — equivalent to Python's to_numpy() copy
+            trainCached = ml.Data.Cache(trainView);
+            testCached  = ml.Data.Cache(testView);
+            using (var cur = trainCached.GetRowCursor(trainCached.Schema))
+                while (cur.MoveNext()) { }
+            using (var cur = testCached.GetRowCursor(testCached.Schema))
+                while (cur.MoveNext()) { }
+        });
+
+        double splitNs      = NowNs() - t0;
         long splitHeapDelta = GetHeapBytes() - splitHeapBefore;
-        long splitRssDelta = GetRssBytes() - splitRssBefore;
+        long splitRssDelta  = splitRssPeak;
 
-        // Materialise cost is captured by PrepareViews; zero here per repeat
-        double materialiseNs = 0;
-        long materialiseHeapDelta = 0;
-        long materialiseRssDelta = 0;
 
         // --- Train phase ---
         long trainHeapBefore = GetHeapBytes();
-        long trainRssBefore = GetRssBytes();
         double t1 = NowNs();
 
-        ITransformer model;
-        if (modelType == "linear")
+        ITransformer model = null!;
+        long trainRssPeak = PeakRssBytesDuring(() =>
         {
-            model = ml.Regression.Trainers.Ols(
-                labelColumnName: "Label",
-                featureColumnName: "Features")
-                .Fit(trainCached);
-        }
-        else if (modelType == "tree")
-        {
-            model = ml.Regression.Trainers.FastForest(
-                labelColumnName: "Label",
-                featureColumnName: "Features",
-                numberOfTrees: 1,
-                numberOfLeaves: 2048,        // Changed from 1048576 — should reduce time dramatically
-                minimumExampleCountPerLeaf: 5)
-                .Fit(trainCached);
-        }
-        else
-        {
-            throw new ArgumentException($"Unknown modelType: {modelType}");
-        }
+            if (modelType == "linear")
+            {
+                model = ml.Regression.Trainers.Ols(
+                    labelColumnName: "Label",
+                    featureColumnName: "Features")
+                    .Fit(trainCached);
+            }
+            else if (modelType == "tree")
+            {
+                model = ml.Regression.Trainers.FastForest(
+                        new FastForestRegressionTrainer.Options
+                        {
+                            LabelColumnName             = "Label",
+                            FeatureColumnName           = "Features",
+                            NumberOfTrees               = 1,
+                            NumberOfLeaves              = 2048,
+                            MinimumExampleCountPerLeaf  = 5,
+                            FeatureFraction             = 1.0
+                        })
+                    .Fit(trainCached);
+            }
+            else
+            {
+                throw new ArgumentException($"Unknown modelType: {modelType}");
+            }
+        });
 
-        double trainNs = NowNs() - t1;
+        double trainNs      = NowNs() - t1;
         long trainHeapDelta = GetHeapBytes() - trainHeapBefore;
-        long trainRssDelta = GetRssBytes() - trainRssBefore;
+        long trainRssDelta  = trainRssPeak;
 
         // --- Infer phase ---
         long inferHeapBefore = GetHeapBytes();
-        long inferRssBefore = GetRssBytes();
         double t2 = NowNs();
 
-        var predView = model.Transform(testCached);
-        var predictions = ml.Data
-            .CreateEnumerable<ModelOutput>(predView, reuseRowObject: false)
-            .ToList();  // ← this line forces every prediction to actually execute
-        double inferNs = NowNs() - t2;
+        IDataView predView = null!;
+        long inferRssPeak = PeakRssBytesDuring(() =>
+        {
+            predView = model.Transform(testCached);
+            ml.Data
+                .CreateEnumerable<ModelOutput>(predView, reuseRowObject: false)
+                .ToList();  // forces every prediction to actually execute
+        });
+
+        double inferNs      = NowNs() - t2;
         long inferHeapDelta = GetHeapBytes() - inferHeapBefore;
-        long inferRssDelta = GetRssBytes() - inferRssBefore;
+        long inferRssDelta  = inferRssPeak;
         
         // --- Accuracy (R²) — computed outside timed blocks so it does not affect timing ---
         var metrics = ml.Regression.Evaluate(predView, labelColumnName: "Label", scoreColumnName: "Score");
@@ -510,9 +476,39 @@ class Program
 
         return new PhaseResult(
             splitNs, splitHeapDelta, splitRssDelta,
-            materialiseNs, materialiseHeapDelta, materialiseRssDelta,
             trainNs, trainHeapDelta, trainRssDelta,
             inferNs, inferHeapDelta, inferRssDelta, r2, rmse);
+    }
+    
+    // -------------------------------------------------------------------------
+// Polls WorkingSet64 on a background thread every ~5 ms and returns the
+// peak observed. Catches native heap peaks (e.g. FastForest tree buffers)
+// that a single before/after snapshot misses because the OS can page them
+// out before the "after" snapshot is taken.
+// -------------------------------------------------------------------------
+    static long PeakRssBytesDuring(Action work)
+    {
+        long peak = 0;
+        bool done = false;
+        var proc = Process.GetCurrentProcess();
+
+        var poller = new Thread(() =>
+        {
+            while (!done)
+            {
+                proc.Refresh();
+                long ws = proc.WorkingSet64;
+                if (ws > peak) peak = ws;
+                Thread.Sleep(5);
+            }
+        }) { IsBackground = true };
+
+        poller.Start();
+        work();
+        done = true;
+        poller.Join();
+
+        return peak;
     }
 
     class ModelOutput
@@ -555,10 +551,8 @@ class Program
         public long SplitRssDeltaBytes;
         // Aggregate
         public double PreprocessNs;
-        // Materialise (IDataView cache population — excluded from train comparison)
-        public double MaterialiseNs;
-        public long MaterialiseHeapDeltaBytes;
-        public long MaterialiseRssDeltaBytes;
+        public double PipelineNs;
+
         // Train
         public double TrainNs;
         public long TrainHeapDeltaBytes;
