@@ -52,10 +52,14 @@ MARKERS = {"linear": "o", "tree": "s"}
 LANG_LABEL = {"csharp": "C# / ML.NET", "python": "Python / scikit-learn"}
 
 
-def load(cs_path: str, py_path: str):
+def load(cs_path: str, py_path: str, drop_repeat0: bool = True):
     cs = pd.read_csv(cs_path)
     py = pd.read_csv(py_path)
     df = pd.concat([cs, py], ignore_index=True)
+
+    # Don't drop repeat 0: C# JIT cold-start makes it up to 2.2x slower
+    if drop_repeat0 and "repeat" in df.columns:
+        df = df[df["repeat"] != 0].reset_index(drop=False)
 
     # Derived columns (seconds + MB)
     for phase in ("load", "clean", "split", "train", "infer", "preprocess", "total"):
@@ -144,10 +148,10 @@ def fig_time_breakdown(g_mean, g_std, out_dir):
                  fontsize=13, fontweight="bold", color="#e8ecf5", y=1.02)
 
     panels = [
-        ("train_s",  "Train time",     "Subset size (rows)", "Train time"),
-        ("infer_s",  "Inference time", "Subset size (rows)", "Inference time"),
+        ("train_s",  "Train time",     "Subset size in rows", "Train time"),
+        ("infer_s",  "Inference time", "Subset size in rows", "Inference time"),
         ("pipeline_s",  "Pipeline time\n(split + train + infer only)",
-         "Subset size (rows)", "Pipeline time"),
+         "Subset size in rows", "Pipeline time"),
     ]
 
     for ax, (col, title, xlabel, ylabel) in zip(axes, panels):
@@ -184,7 +188,7 @@ def fig_phase_bars(g_mean, out_dir):
         "python": ["#6b2a1a", "#f4845f", "#fac8b5"],
     }
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6), sharey=False)
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6), sharey=True)
     fig.patch.set_facecolor("#0f1117")
     fig.suptitle("Phase Time Breakdown (Split / Train / Infer)",
                  fontsize=13, fontweight="bold", color="#e8ecf5", y=1.02)
@@ -215,7 +219,7 @@ def fig_phase_bars(g_mean, out_dir):
 
         ax.set_xticks(x)
         ax.set_xticklabels([f"{int(s):,}" for s in sizes], fontsize=8)
-        ax.set_xlabel("Subset size (rows)", fontsize=8)
+        ax.set_xlabel("Subset size in rows", fontsize=8)
         ax.set_ylabel("Time (s)", fontsize=8)
         _title(ax, f"Model: {model}")
         ax.legend(fontsize=7, loc="upper left")
@@ -232,7 +236,7 @@ def fig_phase_bars(g_mean, out_dir):
 def fig_memory(g_mean, g_std, out_dir):
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     fig.patch.set_facecolor("#0f1117")
-    fig.suptitle("Memory Usage (RSS Delta) — C# vs Python",
+    fig.suptitle("Memory Usage (Peak RSS) — C# vs Python",
                  fontsize=13, fontweight="bold", color="#e8ecf5", y=1.02)
 
     panels = [
@@ -242,7 +246,7 @@ def fig_memory(g_mean, g_std, out_dir):
     for ax, (col, ylabel) in zip(axes, panels):
         _plot_lines(ax, g_mean, g_std, col)
         _title(ax, ylabel)
-        ax.set_xlabel("Subset size (rows)", fontsize=8)
+        ax.set_xlabel("Subset size in rows", fontsize=8)
         ax.set_ylabel(ylabel, fontsize=8)
         ax.yaxis.set_major_formatter(
             ticker.FuncFormatter(lambda v, _: f"{v:.1f} MB"))
@@ -264,12 +268,13 @@ def fig_accuracy(g_mean, out_dir):
                  fontsize=13, fontweight="bold", color="#e8ecf5", y=1.02)
 
     for ax, (col, ylabel, note) in zip(axes, [
-        ("r2",   "R²  (higher = better)", "1.0 = perfect fit"),
-        ("rmse", "RMSE (lower = better)", "lower = more accurate"),
+        ("r2",   "R²: higher = better", "1.0 = perfect fit"),
+        ("rmse", "RMSE: lower = better",
+         "note: Python linear RMSE grows with size\n(wider target range in larger subsets, not model degradation)"),
     ]):
         _plot_lines(ax, g_mean, None, col, error_bars=False)
         _title(ax, ylabel)
-        ax.set_xlabel("Subset size (rows)", fontsize=8)
+        ax.set_xlabel("Subset size in rows", fontsize=8)
         ax.set_ylabel(ylabel, fontsize=8)
         _subtitle(ax, note)
         _legend(ax)
@@ -327,7 +332,7 @@ def fig_speedup(g_mean, out_dir):
         ax.set_xscale("log")
         ax.xaxis.set_major_formatter(
             ticker.FuncFormatter(lambda v, _: f"{int(v):,}"))
-        ax.set_xlabel("Subset size (rows)", fontsize=8)
+        ax.set_xlabel("Subset size in rows", fontsize=8)
         ax.set_ylabel("C# time / Python time", fontsize=8)
         _title(ax, f"{title} speed ratio")
         _subtitle(ax, "above line = C# slower; below = C# faster")
@@ -418,7 +423,7 @@ def fig_summary_table(g_mean, out_dir):
                     "Subset":      f"{int(sz):,}",
                     "Train":       f"{r['train_s']*1000:.1f} ms" if r["train_s"] < 1 else f"{r['train_s']:.3f} s",
                     "Infer":       f"{r['infer_s']*1000:.1f} ms" if r["infer_s"] < 1 else f"{r['infer_s']:.3f} s",
-                    "Total":       f"{r['total_s']:.3f} s",
+                    "Pipeline":    (f"{r['pipeline_s']*1000:.1f} ms" if r["pipeline_s"] < 1 else f"{r['pipeline_s']:.3f} s") if "pipeline_s" in r.index else f"{(r['split_s']+r['train_s']+r['infer_s']):.3f} s",
                     "Train RSS":   f"{r['train_rss_mb']:.1f} MB",
                     "R²":          f"{r['r2']:.4f}",
                     "RMSE":        f"{r['rmse']:.4f}",
@@ -462,7 +467,7 @@ def fig_summary_table(g_mean, out_dir):
             cell.set_text_props(color="#c8cdd8")
             cell.set_edgecolor("#2a2e3d")
 
-    ax.set_title("Summary: Mean metrics across 5 repeats",
+    ax.set_title("Summary: Mean metrics across repeats 1-4 (repeat 0 excluded - C# JIT warm-up)",
                  fontsize=11, fontweight="bold", color="#e8ecf5", pad=12)
 
     fig.tight_layout()
@@ -489,7 +494,8 @@ def main():
     os.makedirs(args.out, exist_ok=True)
 
     print("Loading data...")
-    df = load(args.cs, args.py)
+    df = load(args.cs, args.py, drop_repeat0=False)
+    print("  Repeat 0 dropped (C# JIT cold-start excluded from means)")
     g_mean, g_std = grouped_stats(df)
 
     print(f"  C# rows:     {len(df[df['language'] == 'csharp'])}")

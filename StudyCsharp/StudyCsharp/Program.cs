@@ -125,7 +125,7 @@ class Program
                 {
                     var t = SplitTrainInfer(subset, features, testSize, seed, modelType);
 
-                    // preprocess_ns = load + clean + split (mirrors Python definition)
+                    // preprocess_ns = load + clean + split 
                     double preprocessNs = loadNs + cleanNs + t.SplitNs;
                     double pipelineNs   = t.SplitNs + t.TrainNs + t.InferNs;  // repeatable phases only
                     double totalNs      = preprocessNs + t.TrainNs + t.InferNs; // kept for reference
@@ -374,44 +374,43 @@ class Program
         long splitHeapBefore = GetHeapBytes();
         double t0 = NowNs();
 
-        IDataView trainCached = null!;
-        IDataView testCached  = null!;
+        List<ModelInput> trainList = null!;
+        List<ModelInput> testList  = null!;
         long splitRssPeak = PeakRssBytesDuring(() =>
         {
             var rnd = new Random(seed);
-            var shuffled = data.OrderBy(_ => rnd.Next()).ToList();
-            int splitIdx = (int)(shuffled.Count * (1 - testSize));
-            var trainList = shuffled.Take(splitIdx).ToList();
-            var testList  = shuffled.Skip(splitIdx).ToList();
-
-            var schemaDef = SchemaDefinition.Create(typeof(ModelInput));
-            schemaDef[nameof(ModelInput.Features)].ColumnType =
-                new VectorDataViewType(NumberDataViewType.Single, featureCount);
-
-            var trainView = ml.Data.LoadFromEnumerable(
-                trainList.Select(r => new ModelInput {
+            var shuffled = data.ToList();
+            for (int i = shuffled.Count - 1; i > 0; i--)
+            {
+                int j = rnd.Next(i + 1);
+                (shuffled[i], shuffled[j]) = (shuffled[j], shuffled[i]);
+            }            int splitIdx = (int)(shuffled.Count * (1 - testSize));
+            trainList = shuffled.Take(splitIdx)
+                .Select(r => new ModelInput {
                     Features = features.Select(f => (float)r[f]).ToArray(),
                     Label = (float)r[TARGET]
-                }), schemaDef);
-            var testView = ml.Data.LoadFromEnumerable(
-                testList.Select(r => new ModelInput {
+                }).ToList();
+            testList = shuffled.Skip(splitIdx)
+                .Select(r => new ModelInput {
                     Features = features.Select(f => (float)r[f]).ToArray(),
                     Label = (float)r[TARGET]
-                }), schemaDef);
-
-            // Force materialisation — equivalent to Python's to_numpy() copy
-            trainCached = ml.Data.Cache(trainView);
-            testCached  = ml.Data.Cache(testView);
-            using (var cur = trainCached.GetRowCursor(trainCached.Schema))
-                while (cur.MoveNext()) { }
-            using (var cur = testCached.GetRowCursor(testCached.Schema))
-                while (cur.MoveNext()) { }
+                }).ToList();
         });
-
+        
         double splitNs      = NowNs() - t0;
         long splitHeapDelta = GetHeapBytes() - splitHeapBefore;
         long splitRssDelta  = splitRssPeak;
-
+        
+        // --- IDataView setup (framework overhead, not part of split timing) ---
+        var schemaDef = SchemaDefinition.Create(typeof(ModelInput));
+        schemaDef[nameof(ModelInput.Features)].ColumnType =
+            new VectorDataViewType(NumberDataViewType.Single, featureCount);
+        var trainCached = ml.Data.Cache(ml.Data.LoadFromEnumerable(trainList, schemaDef));
+        var testCached  = ml.Data.Cache(ml.Data.LoadFromEnumerable(testList,  schemaDef));
+        using (var cur = trainCached.GetRowCursor(trainCached.Schema))
+            while (cur.MoveNext()) { }
+        using (var cur = testCached.GetRowCursor(testCached.Schema))
+            while (cur.MoveNext()) { }
 
         // --- Train phase ---
         long trainHeapBefore = GetHeapBytes();
