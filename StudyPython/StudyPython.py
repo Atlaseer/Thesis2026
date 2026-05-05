@@ -53,29 +53,6 @@ def _rss() -> int:
     return psutil.Process(os.getpid()).memory_info().rss
 
 
-def _measure(fn):
-    """
-    Run fn() while recording:
-      - elapsed wall-clock nanoseconds
-      - tracemalloc heap peak (Python-managed allocations only;
-        undercounts NumPy/C buffers — use rss_delta for the full picture)
-      - RSS delta (OS physical RAM change)
-    Returns (result, elapsed_ns, heap_peak_bytes, rss_delta_bytes).
-    """
-    rss_before = _rss()
-    tracemalloc.start()
-    t0 = now_ns()
-
-    result = fn()
-
-    elapsed_ns = now_ns() - t0
-    _, heap_peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    rss_delta = _rss() - rss_before
-
-    return result, elapsed_ns, heap_peak, rss_delta
-
-
 def detect_constant_numeric_cols(df: pd.DataFrame, cols: list[str]) -> list[str]:
     return [c for c in cols if c in df.columns and df[c].nunique(dropna=False) <= 1]
 

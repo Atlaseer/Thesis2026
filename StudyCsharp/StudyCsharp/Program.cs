@@ -378,22 +378,25 @@ class Program
         List<ModelInput> testList  = null!;
         long splitRssPeak = PeakRssBytesDuring(() =>
         {
+            // Fisher-Yates on indices only — avoids copying the Dictionary list
+            var indices = Enumerable.Range(0, data.Count).ToArray();
             var rnd = new Random(seed);
-            var shuffled = data.ToList();
-            for (int i = shuffled.Count - 1; i > 0; i--)
+            for (int i = indices.Length - 1; i > 0; i--)
             {
                 int j = rnd.Next(i + 1);
-                (shuffled[i], shuffled[j]) = (shuffled[j], shuffled[i]);
-            }            int splitIdx = (int)(shuffled.Count * (1 - testSize));
-            trainList = shuffled.Take(splitIdx)
-                .Select(r => new ModelInput {
-                    Features = features.Select(f => (float)r[f]).ToArray(),
-                    Label = (float)r[TARGET]
+                (indices[i], indices[j]) = (indices[j], indices[i]);
+            }
+            int splitIdx = (int)(data.Count * (1 - testSize));
+
+            trainList = indices.Take(splitIdx)
+                .Select(i => new ModelInput {
+                    Features = features.Select(f => (float)data[i][f]).ToArray(),
+                    Label = (float)data[i][TARGET]
                 }).ToList();
-            testList = shuffled.Skip(splitIdx)
-                .Select(r => new ModelInput {
-                    Features = features.Select(f => (float)r[f]).ToArray(),
-                    Label = (float)r[TARGET]
+            testList = indices.Skip(splitIdx)
+                .Select(i => new ModelInput {
+                    Features = features.Select(f => (float)data[i][f]).ToArray(),
+                    Label = (float)data[i][TARGET]
                 }).ToList();
         });
         
