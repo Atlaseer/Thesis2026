@@ -211,7 +211,7 @@ def split_train_infer(
 
     # --- Split phase ---
     def _split():
-        X = sub[features].to_numpy(dtype=np.float64, copy=False)
+        X = sub[features].to_numpy(dtype=np.float32, copy=False)
         y = sub[TARGET].to_numpy(dtype=np.float64, copy=False)
         return train_test_split(X, y, test_size=test_size, random_state=seed)
 
