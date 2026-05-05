@@ -208,11 +208,12 @@ def split_train_infer(
     RSS delta (psutil): OS physical RAM change.
       Captures Python heap + NumPy buffers. Best cross-language comparison metric.
     """
-
+    X = sub[features].to_numpy(dtype=np.float64, copy=False)
+    y = sub[TARGET].to_numpy(dtype=np.float64, copy=False)
     # --- Split phase ---
+
     def _split():
-        X = sub[features].to_numpy(dtype=np.float32, copy=False)
-        y = sub[TARGET].to_numpy(dtype=np.float64, copy=False)
+
         return train_test_split(X, y, test_size=test_size, random_state=seed)
 
     (X_train, X_test, y_train, y_test), split_ns, split_heap, split_rss = _measure(_split)

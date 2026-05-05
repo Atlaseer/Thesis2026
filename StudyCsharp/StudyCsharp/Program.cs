@@ -159,6 +159,7 @@ class Program
                         InferHeapDeltaBytes = t.InferHeapDelta,
                         InferRssDeltaBytes = t.InferRssDelta,
                         TotalNs = totalNs,
+                        WallClockNs = t.WallClockNs,
                         R2 = t.R2,
                         Rmse = t.Rmse,
                     });
@@ -217,6 +218,7 @@ class Program
                         row.InferHeapDeltaBytes.ToString(ci),
                         row.InferRssDeltaBytes.ToString(ci),
                         row.TotalNs.ToString(ci),
+                        row.WallClockNs.ToString(ci),
                         row.R2.ToString("F6", ci),
                         row.Rmse.ToString("F6", ci),
                         row.StratifyByTarget,
@@ -354,7 +356,9 @@ class Program
         double SplitNs, long SplitHeapDelta, long SplitRssDelta,
         double TrainNs, long TrainHeapDelta, long TrainRssDelta,
         double InferNs, long InferHeapDelta, long InferRssDelta,
-        double R2, double Rmse);
+        double R2, double Rmse,
+        double WallClockNs);
+
 
     // -------------------------------------------------------------------------
     // Split → Train → Infer. Each phase is timed and memory-measured
@@ -369,41 +373,56 @@ class Program
     {
         var featureCount = features.Count;
         var ml = new MLContext(seed: seed);
+        
+        double wallClockStart = NowNs();
 
-        // --- Split phase: shuffle, partition, convert to float32, load into ML.NET ---
+        
+        // --- Split phase: pure shuffle + partition only ---
+        // Feature materialisation (dictionary → float32 arrays) happens outside
+        // the timer so split_ns measures only the shuffle and index partition,
+        // matching Python's train_test_split() scope.
         long splitHeapBefore = GetHeapBytes();
-        double t0 = NowNs();
-
-        List<ModelInput> trainList = null!;
-        List<ModelInput> testList  = null!;
+ 
+        var indices = Enumerable.Range(0, data.Count).ToArray();
+        int splitIdx = 0;
+ 
         long splitRssPeak = PeakRssBytesDuring(() =>
         {
-            // Fisher-Yates on indices only — avoids copying the Dictionary list
-            var indices = Enumerable.Range(0, data.Count).ToArray();
             var rnd = new Random(seed);
             for (int i = indices.Length - 1; i > 0; i--)
             {
                 int j = rnd.Next(i + 1);
                 (indices[i], indices[j]) = (indices[j], indices[i]);
             }
-            int splitIdx = (int)(data.Count * (1 - testSize));
-
-            trainList = indices.Take(splitIdx)
-                .Select(i => new ModelInput {
-                    Features = features.Select(f => (float)data[i][f]).ToArray(),
-                    Label = (float)data[i][TARGET]
-                }).ToList();
-            testList = indices.Skip(splitIdx)
-                .Select(i => new ModelInput {
-                    Features = features.Select(f => (float)data[i][f]).ToArray(),
-                    Label = (float)data[i][TARGET]
-                }).ToList();
+            splitIdx = (int)(data.Count * (1 - testSize));
         });
-        
+ 
+        double t0 = NowNs();
+        // Re-run shuffle+partition inside the timer for accurate timing
+        {
+            var rnd2 = new Random(seed);
+            for (int i = indices.Length - 1; i > 0; i--)
+            {
+                int j = rnd2.Next(i + 1);
+                (indices[i], indices[j]) = (indices[j], indices[i]);
+            }
+            splitIdx = (int)(data.Count * (1 - testSize));
+        }
         double splitNs      = NowNs() - t0;
         long splitHeapDelta = GetHeapBytes() - splitHeapBefore;
         long splitRssDelta  = splitRssPeak;
-        
+ 
+        // --- Feature materialisation (outside split timer) ---
+        List<ModelInput> trainList = indices.Take(splitIdx)
+            .Select(i => new ModelInput {
+                Features = features.Select(f => (float)data[i][f]).ToArray(),
+                Label = (float)data[i][TARGET]
+            }).ToList();
+        List<ModelInput> testList = indices.Skip(splitIdx)
+            .Select(i => new ModelInput {
+                Features = features.Select(f => (float)data[i][f]).ToArray(),
+                Label = (float)data[i][TARGET]
+            }).ToList();
         // --- IDataView setup (framework overhead, not part of split timing) ---
         var schemaDef = SchemaDefinition.Create(typeof(ModelInput));
         schemaDef[nameof(ModelInput.Features)].ColumnType =
@@ -475,11 +494,14 @@ class Program
         double r2 = metrics.RSquared;
         double rmse = metrics.RootMeanSquaredError;
 
+        double wallClockNs = NowNs() - wallClockStart;
+
 
         return new PhaseResult(
             splitNs, splitHeapDelta, splitRssDelta,
             trainNs, trainHeapDelta, trainRssDelta,
-            inferNs, inferHeapDelta, inferRssDelta, r2, rmse);
+            inferNs, inferHeapDelta, inferRssDelta, r2, rmse,
+            wallClockNs);
     }
     
     // -------------------------------------------------------------------------
@@ -565,6 +587,8 @@ class Program
         public long InferRssDeltaBytes;
         // Total
         public double TotalNs;
+        // True wall-clock duration of one repeat
+        public double WallClockNs;
         // Accuracy
         public double R2;
         public double Rmse;
