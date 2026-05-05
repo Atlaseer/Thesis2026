@@ -208,6 +208,11 @@ def split_train_infer(
     RSS delta (psutil): OS physical RAM change.
       Captures Python heap + NumPy buffers. Best cross-language comparison metric.
     """
+    # Wall-clock timer: true end-to-end duration of one repeat including
+    # all overhead between individual phase timers (array setup, framework calls, etc.)
+
+    wall_clock_start = now_ns()
+
     X = sub[features].to_numpy(dtype=np.float64, copy=False)
     y = sub[TARGET].to_numpy(dtype=np.float64, copy=False)
     # --- Split phase ---
@@ -237,6 +242,10 @@ def split_train_infer(
     r2 = float(r2_score(y_test, y_pred))
     rmse = float(root_mean_squared_error(y_test, y_pred))
 
+    # Wall-clock timer: true end-to-end duration of one repeat including
+    # all overhead between individual phase timers (array setup, framework calls, etc.)
+    wall_clock_ns = float(now_ns() - wall_clock_start)
+
     return {
         "split_ns":             float(split_ns),
         "split_heap_peak_bytes": float(split_heap),
@@ -249,6 +258,8 @@ def split_train_infer(
         "infer_rss_delta_bytes": float(infer_rss),
         "r2":                   r2,
         "rmse": rmse,
+        "wall_clock_ns":        wall_clock_ns,
+
 
     }
 
@@ -423,6 +434,8 @@ def main() -> None:
                     # Accuracy
                     "r2": float(t["r2"]),
                     "rmse": float(t["rmse"]),
+                    # True wall-clock
+                    "wall_clock_ns": float(t["wall_clock_ns"]),
                     # Flags
                     "stratify_by_target":      bool(args.stratify_by_target),
                     "derive_network_asymmetry": bool(args.derive_network_asymmetry),
@@ -454,6 +467,8 @@ def main() -> None:
             "constant_features":   "Features with nunique<=1 are dropped (e.g. skill_complementarity_score).",
             "r2":                  "R² (coefficient of determination) computed on the test set after inference, outside timed blocks.",
             "rmse": "Root Mean Squared Error on the test set, computed outside timed blocks.",
+            "wall_clock_ns":       "True wall-clock duration of one repeat measured with a single now_ns() bracket around the entire split_train_infer call. Includes all overhead between individual phase timers.",
+
         },
     }
 
