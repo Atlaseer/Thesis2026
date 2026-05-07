@@ -81,7 +81,7 @@ class Program
         string csvPath = @"C:\Code\Thesis\data\compatibility_pairs.csv";
         int seed = 42;
         float testSize = 0.2f;
-        int repeats = 5;
+        int repeats = 10;
         int warmup = 0;
 
         if (!File.Exists(csvPath))
@@ -181,6 +181,7 @@ class Program
                 "train_ns,train_heap_peak_bytes,train_rss_delta_bytes," +
                 "infer_ns,infer_heap_peak_bytes,infer_rss_delta_bytes," +
                 "total_ns," +
+                "wall_clock_ns,"+
                 "r2," +
                 "rmse," +
                 "stratify_by_target,derive_network_asymmetry,vary_split_per_repeat");
@@ -533,6 +534,33 @@ class Program
         poller.Join();
 
         return peak;
+    }
+    static (long peakRss, long peakCommitted) PeakMemoryDuring(Action work)
+    {
+        long peakRss       = 0;
+        long peakCommitted = 0;
+        bool done = false;
+        var proc = Process.GetCurrentProcess();
+
+        var poller = new Thread(() =>
+        {
+            while (!done)
+            {
+                proc.Refresh();
+                long rss       = proc.WorkingSet64;
+                long committed = proc.PrivateMemorySize64;
+                if (rss       > peakRss)       peakRss       = rss;
+                if (committed > peakCommitted) peakCommitted = committed;
+                Thread.Sleep(5);
+            }
+        }) { IsBackground = true };
+
+        poller.Start();
+        work();
+        done = true;
+        poller.Join();
+
+        return (peakRss, peakCommitted);
     }
 
     class ModelOutput

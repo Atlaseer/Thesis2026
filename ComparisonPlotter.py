@@ -509,26 +509,25 @@ def fig_summary_table(g_mean, out_dir):
 
 def fig_all_phases(g_mean, g_std, out_dir):
     """
-    5-panel grid showing each phase independently: load, clean, split, train, infer.
-    Load and clean are constant across repeats (measured once) so their lines
-    are flat — that is expected and worth showing.
-    Each panel has its own y-axis scale so small phases are readable.
+    Two separate figures:
+      1. Load + Clean   — one-time I/O and preprocessing phases (flat lines expected)
+      2. Split + Train + Infer — repeatable ML pipeline phases
+    Each panel has its own y-axis scale so small phases remain readable.
     """
-    phases = [
-        ("load_s",   "Load",   "Time to read CSV from disk"),
-        ("clean_s",  "Clean",  "Dedup, type coercion, NaN/Inf drop"),
-        ("split_s",  "Split",  "Shuffle + partition (pure index split)"),
-        ("train_s",  "Train",  "Model fitting on training set"),
-        ("infer_s",  "Infer",  "Prediction on test set"),
+
+    # ── Figure A: Load and Clean (one-time phases) ─────────────────────────
+    io_phases = [
+        ("load_s",  "Load",  "Time to read CSV from disk"),
+        ("clean_s", "Clean", "Type coercion · NaN/Inf drop · dedup"),
     ]
+    fig_io, axes_io = plt.subplots(1, 2, figsize=(10, 5))
+    fig_io.patch.set_facecolor("#0f1117")
+    fig_io.suptitle(
+        "I/O & Cleaning Phases — C# (ML.NET) vs Python (scikit-learn)\n"
+        "(measured once per subset — flat lines expected across repeats)",
+        fontsize=12, fontweight="bold", color="#e8ecf5", y=1.04)
 
-    fig, axes = plt.subplots(1, 5, figsize=(22, 5))
-    fig.patch.set_facecolor("#0f1117")
-    fig.suptitle(
-        "All Five Phases — C# (ML.NET) vs Python (scikit-learn)",
-        fontsize=13, fontweight="bold", color="#e8ecf5", y=1.02)
-
-    for ax, (col, phase_name, note) in zip(axes, phases):
+    for ax, (col, phase_name, note) in zip(axes_io, io_phases):
         _plot_lines(ax, g_mean, g_std, col)
         _title(ax, phase_name)
         ax.set_xlabel("Subset size (rows)", fontsize=8)
@@ -537,11 +536,39 @@ def fig_all_phases(g_mean, g_std, out_dir):
         _subtitle(ax, note)
         _legend(ax)
 
-    fig.tight_layout()
-    path = os.path.join(out_dir, "comparison_all_phases.png")
-    fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="#0f1117")
-    plt.close(fig)
-    print(f"  Saved: {path}")
+    fig_io.tight_layout()
+    path_io = os.path.join(out_dir, "comparison_phases_io.png")
+    fig_io.savefig(path_io, dpi=150, bbox_inches="tight", facecolor="#0f1117")
+    plt.close(fig_io)
+    print(f"  Saved: {path_io}")
+
+    # ── Figure B: Split, Train, Infer (repeatable pipeline phases) ──────────
+    ml_phases = [
+        ("split_s", "Split", "Shuffle + partition (pure index split)"),
+        ("train_s", "Train", "Model fitting on training set"),
+        ("infer_s", "Infer", "Prediction on test set"),
+    ]
+    fig_ml, axes_ml = plt.subplots(1, 3, figsize=(15, 5))
+    fig_ml.patch.set_facecolor("#0f1117")
+    fig_ml.suptitle(
+        "Pipeline Phases — C# (ML.NET) vs Python (scikit-learn)\n"
+        "(split + train + infer — repeated 10× per configuration)",
+        fontsize=12, fontweight="bold", color="#e8ecf5", y=1.04)
+
+    for ax, (col, phase_name, note) in zip(axes_ml, ml_phases):
+        _plot_lines(ax, g_mean, g_std, col)
+        _title(ax, phase_name)
+        ax.set_xlabel("Subset size (rows)", fontsize=8)
+        ax.set_ylabel("Time (s)", fontsize=8)
+        _fmt_s(ax)
+        _subtitle(ax, note)
+        _legend(ax)
+
+    fig_ml.tight_layout()
+    path_ml = os.path.join(out_dir, "comparison_phases_pipeline.png")
+    fig_ml.savefig(path_ml, dpi=150, bbox_inches="tight", facecolor="#0f1117")
+    plt.close(fig_ml)
+    print(f"  Saved: {path_ml}")
 
 
 # ── Figure 10: Phases vs wall-clock (stacked area + overlay) ─────────────────

@@ -56,13 +56,10 @@ def _rss() -> int:
 def detect_constant_numeric_cols(df: pd.DataFrame, cols: list[str]) -> list[str]:
     return [c for c in cols if c in df.columns and df[c].nunique(dropna=False) <= 1]
 
+    # Find numeric columns with no variance (nunique <= 1).
 
-"""
-    Find numeric columns with no variance (nunique <= 1).
-
-    I drop these because they carry no signal and can create noise or weird edge cases
-    in other toolchains. (In my dataset check, skill_complementarity_score was constant.)
-    """
+    # I drop these because they carry no signal and can create noise or weird edge cases
+    # in other toolchains. (In my dataset check, skill_complementarity_score was constant.)
 
 
 def stratified_subsample_by_target(
@@ -73,12 +70,12 @@ def stratified_subsample_by_target(
     n_bins: int = 20,
     seed: int = 42,
 ) -> pd.DataFrame:
-    """
-    Subsample n rows while roughly preserving the target distribution.
 
-    I use this for scaling tests so that smaller subsets still “look like” the full dataset.
-    It’s deterministic (fixed seed) so I can rerun and get the same subset every time.
-    """
+    # Subsample n rows while roughly preserving the target distribution.
+
+    # I use this for scaling tests so that smaller subsets still “look like” the full dataset.
+    # It’s deterministic (fixed seed) so I can rerun and get the same subset every time.
+
     if n >= len(df):
         return df.reset_index(drop=True)
 
@@ -134,10 +131,10 @@ def load_clean_and_select_features(
     *,
     derive_network_asymmetry: bool,
 ) -> tuple[pd.DataFrame, list[str], dict]:
-    """
-    Returns (clean_df, features, phase_metrics).
-    phase_metrics contains timing and memory for the load and clean phases.
-    """
+
+    # Returns (clean_df, features, phase_metrics).
+    # phase_metrics contains timing and memory for the load and clean phases.
+
     # --- Load phase ---
     print("Cleaning and loading data")
     (df,), load_ns, load_heap_peak, load_rss_delta = _measure(
@@ -198,16 +195,16 @@ def split_train_infer(
     seed: int,
     model_type: str,
 ) -> dict:
-    """
-    Measures time and memory for three phases:
 
-    Heap (tracemalloc): Python-managed allocations only.
-      For scikit-learn this undercounts because NumPy arrays and C extensions
-      allocate outside Python's heap. Treat as a language-runtime overhead indicator.
+    # Measures time and memory for three phases:
 
-    RSS delta (psutil): OS physical RAM change.
-      Captures Python heap + NumPy buffers. Best cross-language comparison metric.
-    """
+    # Heap (tracemalloc): Python-managed allocations only.
+    #  For scikit-learn this undercounts because NumPy arrays and C extensions
+    #  allocate outside Python's heap. Treat as a language-runtime overhead indicator.
+
+    # RSS delta (psutil): OS physical RAM change.
+    #  Captures Python heap + NumPy buffers. Best cross-language comparison metric.
+
     # Wall-clock timer: true end-to-end duration of one repeat including
     # all overhead between individual phase timers (array setup, framework calls, etc.)
 
@@ -265,14 +262,14 @@ def split_train_infer(
 
 
 def _measure(fn):
-    """
-    Run fn() while recording:
-      - elapsed wall-clock nanoseconds
-      - tracemalloc heap peak (Python-managed allocations only)
-      - RSS peak (highest WorkingSet observed during fn(), polled every 5 ms)
-        Matches C#'s PeakRssBytesDuring — comparable across languages.
-    Returns (result, elapsed_ns, heap_peak_bytes, rss_peak_bytes).
-    """
+
+    # Run fn() while recording:
+    #  - elapsed wall-clock nanoseconds
+    #  - tracemalloc heap peak (Python-managed allocations only)
+    #  - RSS peak (highest WorkingSet observed during fn(), polled every 5 ms)
+    #    Matches C#'s PeakRssBytesDuring — comparable across languages.
+    # Returns (result, elapsed_ns, heap_peak_bytes, rss_peak_bytes).
+
     import threading
 
     rss_peak = 0
@@ -284,7 +281,7 @@ def _measure(fn):
             sample = _rss()
             if sample > rss_peak:
                 rss_peak = sample
-            sleep(0.005)  # 5 ms — matches C# Thread.Sleep(5)
+            sleep(0.005)
 
     tracemalloc.start()
     t0 = now_ns()
@@ -314,7 +311,7 @@ def main() -> None:
     ap.add_argument("--out",  type=str, default="results/python_timings.csv")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--test-size",  type=float, default=0.2)
-    ap.add_argument("--repeats",    type=int,   default=5)
+    ap.add_argument("--repeats",    type=int,   default=10)
     ap.add_argument("--warmup",     type=int,   default=0)
     ap.add_argument("--stratify-by-target",      action="store_true")
     ap.add_argument("--derive-network-asymmetry", action="store_true")
