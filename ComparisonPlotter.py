@@ -52,9 +52,6 @@ LANG_LABEL = {"csharp": "C# / ML.NET", "python": "Python / scikit-learn"}
 
 
 def load(cs_path: str, py_path: str) -> pd.DataFrame:
-    # The C# CSV may be missing the wall_clock_ns column header (one extra data
-    # value per row with no matching header).  Detect and insert the missing
-    # header before reading so all columns align correctly.
     import io as _io
     with open(cs_path, encoding="utf-8") as fh:
         raw_cs = fh.read()
@@ -63,7 +60,6 @@ def load(cs_path: str, py_path: str) -> pd.DataFrame:
     n_header = len(cs_header)
     n_data = len(cs_lines[1].split(",")) if len(cs_lines) > 1 else n_header
     if n_data == n_header + 1 and "wall_clock_ns" not in cs_header:
-        # Insert the missing wall_clock_ns header before r2
         insert_pos = cs_header.index("r2") if "r2" in cs_header else n_header
         cs_header.insert(insert_pos, "wall_clock_ns")
         cs_lines[0] = ",".join(cs_header)
@@ -72,7 +68,6 @@ def load(cs_path: str, py_path: str) -> pd.DataFrame:
     py = pd.read_csv(py_path)
     df = pd.concat([cs, py], ignore_index=True)
 
-    # Normalise language labels — C# CSV writes 'ml.net', plotter expects 'csharp'
     if "language" in df.columns:
         df["language"] = df["language"].replace({"ml.net": "csharp"})
 
@@ -505,17 +500,12 @@ def fig_summary_table(g_mean, out_dir):
     print(f"  Saved: {path}")
 
 
-# ── Figure 9: All five phases — individual line charts ───────────────────────
-
 def fig_all_phases(g_mean, g_std, out_dir):
     """
     Two separate figures:
       1. Load + Clean   — one-time I/O and preprocessing phases (flat lines expected)
       2. Split + Train + Infer — repeatable ML pipeline phases
-    Each panel has its own y-axis scale so small phases remain readable.
     """
-
-    # ── Figure A: Load and Clean (one-time phases) ─────────────────────────
     io_phases = [
         ("load_s",  "Load",  "Time to read CSV from disk"),
         ("clean_s", "Clean", "Type coercion · NaN/Inf drop · dedup"),
@@ -542,7 +532,6 @@ def fig_all_phases(g_mean, g_std, out_dir):
     plt.close(fig_io)
     print(f"  Saved: {path_io}")
 
-    # ── Figure B: Split, Train, Infer (repeatable pipeline phases) ──────────
     ml_phases = [
         ("split_s", "Split", "Shuffle + partition (pure index split)"),
         ("train_s", "Train", "Model fitting on training set"),
@@ -571,24 +560,17 @@ def fig_all_phases(g_mean, g_std, out_dir):
     print(f"  Saved: {path_ml}")
 
 
-# ── Figure 10: Phases vs wall-clock (stacked area + overlay) ─────────────────
-
 def fig_phases_vs_wallclock(g_mean, g_std, out_dir):
     """
     For each language × model combination, shows a stacked bar of the five
     measured phases (load + clean + split + train + infer) next to a marker
     for pipeline_s (split+train+infer) and — if available — wall_clock_s.
-    This makes the relationship between the summed phases and the true
-    end-to-end time immediately visible.
-
-    Layout: 2 rows (linear / tree) × 2 columns (C# / Python).
     """
     has_wc = "wall_clock_s" in g_mean.columns
     sizes = sorted(g_mean["subset_size"].unique())
     langs = ["csharp", "python"]
     models = ["linear", "tree"]
 
-    # Colours for each phase segment (same for both languages, distinguished by hatch)
     seg_colors = {
         "load_s":  "#2e4a6b",
         "clean_s": "#1e6b5a",
@@ -641,7 +623,6 @@ def fig_phases_vs_wallclock(g_mean, g_std, out_dir):
                 bottoms += vals
                 added_labels.add(phase)
 
-            # Pipeline marker (diamond)
             pipe_vals = []
             for sz in sizes:
                 row = g_mean[(g_mean["language"] == lang) &
@@ -655,7 +636,6 @@ def fig_phases_vs_wallclock(g_mean, g_std, out_dir):
                     color="#f4e04d", markersize=7, zorder=5,
                     label="Pipeline (split+train+infer)")
 
-            # Wall-clock marker (X) if available
             if has_wc:
                 wc_vals = []
                 for sz in sizes:
@@ -685,6 +665,478 @@ def fig_phases_vs_wallclock(g_mean, g_std, out_dir):
     print(f"  Saved: {path}")
 
 
+# ── NEW: Figure RQ1 — Normalised phase contribution (% of wall-clock) ────────
+
+def fig_normalized_phase_contribution(g_mean, out_dir):
+    """
+    RQ1 — For each ecosystem × model × dataset size, shows each phase as a
+    percentage of total wall-clock time.  Makes immediately visible how the
+    composition of time changes between C# and Python and across dataset sizes.
+
+    Layout: 2 rows (C# / Python) × 2 columns (linear / tree).
+    Each bar sums to 100 %.
+    """
+    has_wc = "wall_clock_s" in g_mean.columns
+    phases = ["load_s", "clean_s", "split_s", "train_s", "infer_s"]
+    phase_labels = ["Load", "Clean", "Split", "Train", "Infer"]
+    phase_colors = ["#2e4a6b", "#1e6b5a", "#8b4513", "#4fc3f7", "#a8d8ea"]
+    sizes = sorted(g_mean["subset_size"].unique())
+    x = np.arange(len(sizes))
+    bw = 0.6
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharey=True)
+    fig.patch.set_facecolor("#0f1117")
+    fig.suptitle(
+        "Phase Composition — % of Total Time per Ecosystem & Model  (RQ1)\n"
+        "Each bar sums to 100 % of wall-clock (or phase-sum if wall-clock unavailable)",
+        fontsize=12, fontweight="bold", color="#e8ecf5", y=1.02)
+
+    for row_idx, lang in enumerate(["csharp", "python"]):
+        for col_idx, model in enumerate(["linear", "tree"]):
+            ax = axes[row_idx][col_idx]
+            bottoms = np.zeros(len(sizes))
+
+            # Compute denominator: wall-clock if available, else sum of all phases
+            denoms = []
+            for sz in sizes:
+                row = g_mean[(g_mean["language"] == lang) &
+                             (g_mean["model"] == model) &
+                             (g_mean["subset_size"] == sz)]
+                if row.empty:
+                    denoms.append(np.nan)
+                    continue
+                r = row.iloc[0]
+                if has_wc and not np.isnan(r.get("wall_clock_s", np.nan)):
+                    denoms.append(float(r["wall_clock_s"]))
+                else:
+                    denoms.append(sum(
+                        float(r[p]) for p in phases if p in r.index
+                        and not np.isnan(r[p])))
+            denoms = np.array(denoms)
+
+            for phase, label, color in zip(phases, phase_labels, phase_colors):
+                vals = []
+                for sz in sizes:
+                    row = g_mean[(g_mean["language"] == lang) &
+                                 (g_mean["model"] == model) &
+                                 (g_mean["subset_size"] == sz)]
+                    if row.empty or phase not in row.columns:
+                        vals.append(0.0)
+                        continue
+                    v = float(row[phase].iloc[0])
+                    vals.append(v)
+                vals = np.array(vals)
+                pct = np.where(denoms > 0, vals / denoms * 100, 0.0)
+                ax.bar(x, pct, bw, bottom=bottoms,
+                       color=color, label=label, alpha=0.88,
+                       edgecolor="#0f1117", linewidth=0.4)
+                # Annotate segments > 5 %
+                for xi, (p, b) in enumerate(zip(pct, bottoms)):
+                    if p > 5:
+                        ax.text(xi, b + p / 2, f"{p:.0f}%",
+                                ha="center", va="center",
+                                fontsize=6.5, color="#e8ecf5", fontweight="bold")
+                bottoms += pct
+
+            ax.set_xticks(x)
+            ax.set_xticklabels([f"{int(s):,}" for s in sizes], fontsize=7,
+                               rotation=20, ha="right")
+            ax.set_xlabel("Subset size (rows)", fontsize=8)
+            ax.set_ylabel("% of total time", fontsize=8)
+            ax.set_ylim(0, 110)
+            ax.yaxis.set_major_formatter(
+                ticker.FuncFormatter(lambda v, _: f"{v:.0f}%"))
+            _title(ax, f"{LANG_LABEL[lang]} · {model}")
+            if row_idx == 0 and col_idx == 0:
+                ax.legend(fontsize=7.5, loc="upper right",
+                          bbox_to_anchor=(1.0, 0.98))
+
+    fig.tight_layout()
+    path = os.path.join(out_dir, "comparison_normalized_phases.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="#0f1117")
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
+
+# ── NEW: Figure RQ2 — Waterfall of signed phase differences ──────────────────
+
+def fig_waterfall_phase_diff(g_mean, out_dir):
+    """
+    RQ2 — For each model × dataset size, shows the signed difference
+    (C# time − Python time) per phase as horizontal bars.
+    Bars right of zero = C# slower for that phase.
+    Bars left  of zero = C# faster for that phase.
+
+    Layout: one figure per model (linear / tree), subset sizes on y-axis,
+    phases as grouped bars within each size.
+    """
+    phases = ["load_s", "clean_s", "split_s", "train_s", "infer_s"]
+    phase_labels = ["Load", "Clean", "Split", "Train", "Infer"]
+    # Distinct colors per phase so each bar is identifiable
+    phase_colors = ["#4fc3f7", "#1e9e82", "#f4e04d", "#f4845f", "#c1440e"]
+
+    sizes = sorted(g_mean["subset_size"].unique())
+    cs_data = g_mean[g_mean["language"] == "csharp"]
+    py_data = g_mean[g_mean["language"] == "python"]
+
+    if cs_data.empty or py_data.empty:
+        print("  Skipped fig_waterfall_phase_diff: need both languages")
+        return
+
+    for model in ["linear", "tree"]:
+        n_phases = len(phases)
+        n_sizes = len(sizes)
+        fig, ax = plt.subplots(figsize=(12, max(6, n_sizes * 1.4)))
+        fig.patch.set_facecolor("#0f1117")
+
+        # Build y positions: group phases within each size block
+        group_height = n_phases + 1.0   # gap between size groups
+        yticks, yticklabels = [], []
+
+        for si, sz in enumerate(reversed(sizes)):   # largest size at top
+            base_y = si * group_height
+            for pi, (phase, label, color) in enumerate(
+                    zip(phases, phase_labels, phase_colors)):
+                cs_row = cs_data[(cs_data["model"] == model) &
+                                 (cs_data["subset_size"] == sz)]
+                py_row = py_data[(py_data["model"] == model) &
+                                 (py_data["subset_size"] == sz)]
+                if cs_row.empty or py_row.empty:
+                    continue
+                if phase not in cs_row.columns or phase not in py_row.columns:
+                    continue
+                diff = float(cs_row[phase].iloc[0]) - \
+                    float(py_row[phase].iloc[0])
+                y_pos = base_y + pi * 0.9
+                bar_color = "#ff6b6b" if diff > 0 else "#51cf66"
+                ax.barh(y_pos, diff, 0.75,
+                        color=bar_color, alpha=0.82,
+                        edgecolor="#0f1117", linewidth=0.4)
+                # Phase label on bar
+                ax.text(diff + (0.002 if diff >= 0 else -0.002),
+                        y_pos, label,
+                        va="center",
+                        ha="left" if diff >= 0 else "right",
+                        fontsize=6.5, color="#c8cdd8")
+
+            # Size label on y-axis at group midpoint
+            mid_y = base_y + (n_phases - 1) * 0.9 / 2
+            yticks.append(mid_y)
+            yticklabels.append(f"{int(sz):,}")
+
+        ax.axvline(0, color="#ffffff", linewidth=1.0, alpha=0.5)
+        ax.set_yticks(yticks)
+        ax.set_yticklabels(yticklabels, fontsize=8)
+        ax.set_xlabel("C# time − Python time  (s)\n"
+                      "← C# faster  |  C# slower →", fontsize=8)
+
+        # Format x-axis in ms or s
+        def _xfmt(v, _):
+            if abs(v) < 1.0:
+                return f"{v*1000:.0f} ms"
+            return f"{v:.1f} s"
+        ax.xaxis.set_major_formatter(ticker.FuncFormatter(_xfmt))
+
+        ax.set_title(
+            f"Phase-Level Time Difference: C# − Python  (model: {model})  (RQ2)\n"
+            "Red = C# slower  |  Green = C# faster",
+            fontsize=10, fontweight="bold", color="#e8ecf5", pad=10)
+        ax.set_facecolor("#181b24")
+        fig.tight_layout()
+        path = os.path.join(out_dir, f"comparison_waterfall_{model}.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="#0f1117")
+        plt.close(fig)
+        print(f"  Saved: {path}")
+
+
+# ── NEW: Figure RQ3 — Log-log scaling plot ───────────────────────────────────
+
+def fig_loglog_scaling(g_mean, out_dir):
+    """
+    RQ3 — Log-log plot of execution time vs dataset size for train and infer.
+    On a log-log axis the slope reveals the scaling exponent:
+      slope ≈ 1.0  →  O(n)   linear scaling
+      slope ≈ 1.5  →  O(n^1.5)
+      slope ≈ 2.0  →  O(n²)  quadratic
+    A reference O(n) line is drawn for comparison.
+
+    Annotates the fitted slope for each series so the reader can immediately
+    compare scaling behaviour between ecosystems and algorithms.
+    """
+    from numpy.polynomial.polynomial import polyfit as nppolyfit
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    fig.patch.set_facecolor("#0f1117")
+    fig.suptitle(
+        "Log-Log Scaling Plot — Execution Time vs Dataset Size  (RQ3)\n"
+        "Slope on log-log axes ≈ scaling exponent  (slope 1.0 = linear O(n))",
+        fontsize=12, fontweight="bold", color="#e8ecf5", y=1.02)
+
+    for ax, (col, title) in zip(axes, [
+        ("train_s", "Train time"),
+        ("infer_s", "Inference time"),
+    ]):
+        # Reference O(n) line anchored to smallest C# linear value
+        ref_sizes = sorted(g_mean["subset_size"].unique())
+        ref_row = g_mean[(g_mean["language"] == "csharp") &
+                         (g_mean["model"] == "linear") &
+                         (g_mean["subset_size"] == ref_sizes[0])]
+        if not ref_row.empty and col in ref_row.columns:
+            ref_y0 = float(ref_row[col].iloc[0])
+            ref_x0 = ref_sizes[0]
+            ref_ys = [ref_y0 * (sz / ref_x0) for sz in ref_sizes]
+            ax.plot(ref_sizes, ref_ys,
+                    color="#ffffff", linewidth=0.8, linestyle=":",
+                    alpha=0.35, label="O(n) reference", zorder=1)
+
+        for lang in ("csharp", "python"):
+            for model in ("linear", "tree"):
+                sub = g_mean[(g_mean["language"] == lang) &
+                             (g_mean["model"] == model)]
+                if sub.empty or col not in sub.columns:
+                    continue
+                x_vals = sub["subset_size"].values.astype(float)
+                y_vals = sub[col].values.astype(float)
+                # Remove non-positive values before log
+                mask = (x_vals > 0) & (y_vals > 0)
+                if mask.sum() < 2:
+                    continue
+                xm, ym = x_vals[mask], y_vals[mask]
+
+                ax.plot(xm, ym,
+                        color=COLORS[(lang, model)],
+                        marker=MARKERS[model],
+                        linestyle=LINESTYLE[model],
+                        linewidth=1.8, markersize=6, alpha=0.92,
+                        label=f"{LANG_LABEL[lang]} · {model}",
+                        zorder=3)
+
+                # Fit log-log slope
+                log_x = np.log10(xm)
+                log_y = np.log10(ym)
+                try:
+                    coeffs = np.polyfit(log_x, log_y, 1)
+                    slope = coeffs[0]
+                    # Annotate slope near last point
+                    ax.annotate(
+                        f"  slope={slope:.2f}",
+                        xy=(xm[-1], ym[-1]),
+                        fontsize=6.5,
+                        color=COLORS[(lang, model)],
+                        va="center", alpha=0.85)
+                except Exception:
+                    pass
+
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.xaxis.set_major_formatter(
+            ticker.FuncFormatter(lambda v, _: f"{int(v):,}"))
+        ax.yaxis.set_major_formatter(
+            ticker.FuncFormatter(lambda v, _:
+                                 f"{v*1000:.1f} ms" if v < 1 else f"{v:.2f} s"))
+        ax.set_xlabel("Subset size (rows)  [log scale]", fontsize=8)
+        ax.set_ylabel("Time  [log scale]", fontsize=8)
+        _title(ax, title)
+        _subtitle(ax, "Parallel lines = same exponent; steeper = worse scaling")
+        _legend(ax, loc="upper left")
+
+    fig.tight_layout()
+    path = os.path.join(out_dir, "comparison_loglog_scaling.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="#0f1117")
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
+
+# ── NEW: Figure RQ4 — Grouped ratio bars (algorithm × phase) ─────────────────
+
+def fig_algorithm_ratio_bars(g_mean, out_dir):
+    """
+    RQ4 — For each dataset size, shows the C#/Python speed ratio as grouped
+    bars where the grouping is:  algorithm (linear / tree) × phase (train / infer).
+
+    This puts linear and tree directly side by side so the reader can immediately
+    see whether the performance advantage is consistent across algorithm families
+    or depends on the algorithm.
+
+    One figure per dataset size (to avoid overcrowding), plus a summary figure
+    showing all sizes as a multi-panel grid.
+    """
+    sizes = sorted(g_mean["subset_size"].unique())
+    phases = [("train_s", "Train"), ("infer_s", "Infer"),
+              ("pipeline_s", "Pipeline")]
+    models = ["linear", "tree"]
+    cs_data = g_mean[g_mean["language"] == "csharp"]
+    py_data = g_mean[g_mean["language"] == "python"]
+
+    if cs_data.empty or py_data.empty:
+        print("  Skipped fig_algorithm_ratio_bars: need both languages")
+        return
+
+    n_sizes = len(sizes)
+    n_cols = min(3, n_sizes)
+    n_rows = int(np.ceil(n_sizes / n_cols))
+
+    fig, axes = plt.subplots(n_rows, n_cols,
+                             figsize=(6 * n_cols, 5 * n_rows),
+                             sharey=False)
+    if n_sizes == 1:
+        axes = np.array([[axes]])
+    elif n_rows == 1:
+        axes = axes.reshape(1, -1)
+    fig.patch.set_facecolor("#0f1117")
+    fig.suptitle(
+        "C# ÷ Python Speed Ratio by Algorithm & Phase  (RQ4)\n"
+        ">1 = C# slower  |  <1 = C# faster  |  Grouped by phase, split by model",
+        fontsize=12, fontweight="bold", color="#e8ecf5", y=1.02)
+
+    # Bar positions: for each phase group, two bars side by side (linear / tree)
+    n_phases = len(phases)
+    group_width = 1.0
+    bar_width = 0.35
+    group_centers = np.arange(n_phases) * (group_width + 0.4)
+
+    for si, sz in enumerate(sizes):
+        row_idx = si // n_cols
+        col_idx = si % n_cols
+        ax = axes[row_idx][col_idx]
+
+        for mi, model in enumerate(models):
+            offset = (mi - 0.5) * bar_width
+            ratios = []
+            for col, _ in phases:
+                cs_row = cs_data[(cs_data["model"] == model) &
+                                 (cs_data["subset_size"] == sz)]
+                py_row = py_data[(py_data["model"] == model) &
+                                 (py_data["subset_size"] == sz)]
+                if cs_row.empty or py_row.empty or col not in cs_row.columns:
+                    ratios.append(np.nan)
+                    continue
+                cv = float(cs_row[col].iloc[0])
+                pv = float(py_row[col].iloc[0])
+                ratios.append(cv / pv if pv > 0 else np.nan)
+
+            bar_colors = [
+                "#ff6b6b" if (not np.isnan(r) and r > 1) else "#51cf66"
+                for r in ratios
+            ]
+            bars = ax.bar(group_centers + offset, ratios, bar_width,
+                          color=bar_colors,
+                          label=f"{model}",
+                          alpha=0.82, edgecolor="#0f1117", linewidth=0.4)
+
+            # Value labels on bars
+            for bar, ratio in zip(bars, ratios):
+                if not np.isnan(ratio):
+                    ax.text(bar.get_x() + bar.get_width() / 2,
+                            bar.get_height() + 0.05,
+                            f"{ratio:.1f}×",
+                            ha="center", va="bottom",
+                            fontsize=6.5, color="#e8ecf5")
+
+        ax.axhline(1.0, color="#ffffff", linewidth=0.9,
+                   linestyle=":", alpha=0.5)
+        ax.set_xticks(group_centers)
+        ax.set_xticklabels([lbl for _, lbl in phases], fontsize=8)
+        ax.set_ylabel("C# time / Python time", fontsize=8)
+        ax.set_xlabel("Phase", fontsize=8)
+        _title(ax, f"Subset size: {int(sz):,} rows")
+        _subtitle(ax, "Red = C# slower  |  Green = C# faster")
+
+        from matplotlib.patches import Patch
+        ax.legend(handles=[
+            Patch(facecolor=COLORS[("csharp", m)], label=m) for m in models
+        ], fontsize=7.5, loc="upper right")
+
+    # Hide unused subplots
+    for si in range(n_sizes, n_rows * n_cols):
+        axes[si // n_cols][si % n_cols].set_visible(False)
+
+    fig.tight_layout()
+    path = os.path.join(out_dir, "comparison_algorithm_ratio_bars.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="#0f1117")
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
+
+# ── NEW: Figure RQ4 — Interaction plot (algorithm × ecosystem) ───────────────
+
+def fig_interaction_plot(g_mean, out_dir):
+    """
+    RQ4 — Classic interaction plot.
+    X-axis: algorithm family (linear / tree).
+    Y-axis: C#/Python speed ratio.
+    Separate lines for each dataset size.
+
+    Crossing lines are the canonical visual for an interaction effect —
+    they show that the performance advantage depends on the algorithm,
+    not just the ecosystem.  One panel per phase (train / infer / pipeline).
+    """
+    phases = [("train_s", "Train"), ("infer_s", "Infer"),
+              ("pipeline_s", "Pipeline")]
+    sizes = sorted(g_mean["subset_size"].unique())
+    cs_data = g_mean[g_mean["language"] == "csharp"]
+    py_data = g_mean[g_mean["language"] == "python"]
+
+    if cs_data.empty or py_data.empty:
+        print("  Skipped fig_interaction_plot: need both languages")
+        return
+
+    cmap = plt.cm.get_cmap("plasma", len(sizes))
+    x_positions = [0, 1]
+    x_labels = ["linear", "tree"]
+
+    fig, axes = plt.subplots(1, len(phases), figsize=(5 * len(phases), 6))
+    fig.patch.set_facecolor("#0f1117")
+    fig.suptitle(
+        "Interaction Plot — C#/Python Ratio across Algorithm Families  (RQ4)\n"
+        "Crossing lines = algorithm-dependent advantage  |  Each line = one dataset size",
+        fontsize=11, fontweight="bold", color="#e8ecf5", y=1.02)
+
+    for ax, (col, phase_label) in zip(axes, phases):
+        for si, sz in enumerate(sizes):
+            ratios = []
+            for model in ["linear", "tree"]:
+                cs_row = cs_data[(cs_data["model"] == model) &
+                                 (cs_data["subset_size"] == sz)]
+                py_row = py_data[(py_data["model"] == model) &
+                                 (py_data["subset_size"] == sz)]
+                if cs_row.empty or py_row.empty or col not in cs_row.columns:
+                    ratios.append(np.nan)
+                    continue
+                cv = float(cs_row[col].iloc[0])
+                pv = float(py_row[col].iloc[0])
+                ratios.append(cv / pv if pv > 0 else np.nan)
+
+            color = cmap(si)
+            ax.plot(x_positions, ratios,
+                    marker="o", linewidth=1.8, markersize=7,
+                    color=color,
+                    label=f"{int(sz):,} rows", alpha=0.88)
+            # Label the end point
+            if not np.isnan(ratios[-1]):
+                ax.annotate(f"{int(sz/1e6):.1f}M",
+                            xy=(1, ratios[-1]),
+                            xytext=(1.05, ratios[-1]),
+                            fontsize=6, color=color, va="center")
+
+        ax.axhline(1.0, color="#ffffff", linewidth=0.9,
+                   linestyle=":", alpha=0.5, label="parity")
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(x_labels, fontsize=9, fontweight="bold")
+        ax.set_xlabel("Algorithm family", fontsize=8)
+        ax.set_ylabel("C# time / Python time\n(>1 = C# slower)", fontsize=8)
+        _title(ax, f"{phase_label} — ratio by algorithm")
+        _subtitle(
+            ax, "Crossing lines → interaction effect (advantage depends on algorithm)")
+        _legend(ax, loc="upper left")
+
+    fig.tight_layout()
+    path = os.path.join(out_dir, "comparison_interaction_plot.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="#0f1117")
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -696,7 +1148,6 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
     def resolve_csv(given_path, candidates):
-        """Return the first existing path from given_path + fallback candidates."""
         for p in [given_path] + candidates:
             if p and os.path.exists(p):
                 return p
@@ -730,7 +1181,7 @@ def main():
     print(f"  Repeats:     {sorted(df['repeat'].unique())}")
     print()
 
-    print("Generating plots...")
+    print("Generating original plots...")
     fig_time_breakdown(g_mean, g_std, args.out)
     fig_phase_bars(g_mean, args.out)
     fig_memory(g_mean, g_std, args.out)
@@ -742,8 +1193,31 @@ def main():
     fig_phases_vs_wallclock(g_mean, g_std, args.out)
     fig_summary_table(g_mean, args.out)
 
-    n_plots = 7 + (1 if "wall_clock_s" in g_mean.columns else 0) + 2
-    print(f"\nDone — {n_plots} plots saved to: {os.path.abspath(args.out)}/")
+    print("\nGenerating new RQ-targeted plots...")
+    # RQ1 — How does time composition differ across ecosystems?
+    fig_normalized_phase_contribution(g_mean, args.out)
+
+    # RQ2 — Which phases drive the differences? (signed waterfall)
+    fig_waterfall_phase_diff(g_mean, args.out)
+
+    # RQ3 — How does scaling behaviour differ? (log-log)
+    fig_loglog_scaling(g_mean, args.out)
+
+    # RQ4 — Is the advantage consistent across algorithm families?
+    fig_algorithm_ratio_bars(g_mean, args.out)
+    fig_interaction_plot(g_mean, args.out)
+
+    n_original = 10
+    n_new = 5  # normalized + 2×waterfall + loglog + ratio_bars + interaction
+    print(f"\nDone — {n_original} original + {n_new} new RQ-targeted plots "
+          f"saved to: {os.path.abspath(args.out)}/")
+    print("\nNew plots summary:")
+    print("  comparison_normalized_phases.png    → RQ1: phase % of total time")
+    print("  comparison_waterfall_linear.png     → RQ2: signed phase diff (linear)")
+    print("  comparison_waterfall_tree.png       → RQ2: signed phase diff (tree)")
+    print("  comparison_loglog_scaling.png       → RQ3: scaling exponents")
+    print("  comparison_algorithm_ratio_bars.png → RQ4: ratio by algorithm & phase")
+    print("  comparison_interaction_plot.png     → RQ4: interaction effect")
 
 
 if __name__ == "__main__":

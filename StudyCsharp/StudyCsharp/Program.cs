@@ -40,22 +40,12 @@ class Program
     // Set dataset fractions to test
     // ---------------------------------------------------------------------------------
     static readonly double[] PERCENTAGES = { 1.00, 0.75, 0.50, 0.25, 0.10 };
-
-    //static readonly double[] PERCENTAGES = { 1.00, 0.75, 0.50, 0.25, 0.10 };
-
-    // -------------------------------------------------------------------------
-    // Timing: call NowNs() before and after a block, then subtract.
-    // BUG FIX: the old LoadCleanAndSelect stored a raw Stopwatch.GetTimestamp()
-    // value instead of a duration (~2e16 ns = 231 days). Fixed by always
-    // computing (NowNs() - t0) immediately after the timed block.
-    // -------------------------------------------------------------------------
+    
     static double NowNs() =>
         Stopwatch.GetTimestamp() * 1_000_000_000.0 / Stopwatch.Frequency;
 
     // -------------------------------------------------------------------------
-    // OS physical RAM for this process. proc.Refresh() is mandatory —
-    // WorkingSet64 caches stale values without it.
-    // Comparable to psutil RSS in Python: captures managed heap + native buffers.
+    // OS physical RAM for this process
     // -------------------------------------------------------------------------
     static long GetRssBytes()
     {
@@ -68,11 +58,8 @@ class Program
     // Entry point which runs the experiment: load, clean, select features, 
     // then for each subset size: 
     // warmup, then repeat: split, train, infer, and record timings.
-    // ---------------------------------------------------------------------------------
 
-    // -------------------------------------------------------------------------
     // .NET GC managed heap only. Undercounts ML.NET native allocations
-    // (e.g. FastForest tree buffers live outside the GC heap).
     // -------------------------------------------------------------------------
     static long GetHeapBytes() => GC.GetTotalMemory(false);
 
@@ -167,8 +154,7 @@ class Program
             }
         }
 
-        // BUG FIX: header and writer now include all memory columns.
-        // BUG FIX: test_size uses :F2 so 0.2f serialises as "0.20" not "0".
+        // Header and writer now include all memory columns.
         using (var writer = new StreamWriter(outPath))
         {
             writer.WriteLine(
@@ -271,7 +257,7 @@ class Program
     }
 
     // -------------------------------------------------------------------------
-    // Load CSV and clean data. Measures time + memory for each phase separately.
+    // Load CSV and clean data. Measures time + memory for each phase separately
     // -------------------------------------------------------------------------
     static (List<Dictionary<string, double>> data,
         List<string> features,
@@ -314,8 +300,6 @@ class Program
         .Select(g => g.First())
         .ToList();
 
-    // Parse model columns only, dropping rows where any field fails to parse,
-    // is NaN, or is Infinity — mirrors Python's to_numeric(errors="coerce") + notna()
     var rows = rawRows
         .Select(r =>
         {
@@ -336,7 +320,7 @@ class Program
         .Select(r => r!)
         .ToList();
 
-    // Drop constant features (nunique <= 1) — same as Python's detect_constant_numeric_cols
+    // Drop constant features (nunique <= 1) 
     var features = BASE_FEATURES
         .Where(f => rows.Select(r => r[f]).Distinct().Count() > 1)
         .ToList();
@@ -378,8 +362,8 @@ class Program
         double wallClockStart = NowNs();
 
         
-        // --- Split phase: pure shuffle + partition only ---
-        // Feature materialisation (dictionary → float32 arrays) happens outside
+        // --- Split phase is shuffle + partition only ---
+        // Feature materialisation happens outside
         // the timer so split_ns measures only the shuffle and index partition,
         // matching Python's train_test_split() scope.
         long splitHeapBefore = GetHeapBytes();
@@ -413,7 +397,7 @@ class Program
         long splitHeapDelta = GetHeapBytes() - splitHeapBefore;
         long splitRssDelta  = splitRssPeak;
  
-        // --- Feature materialisation (outside split timer) ---
+        //  Feature materialisation, outside split timer
         List<ModelInput> trainList = indices.Take(splitIdx)
             .Select(i => new ModelInput {
                 Features = features.Select(f => (float)data[i][f]).ToArray(),
@@ -424,7 +408,7 @@ class Program
                 Features = features.Select(f => (float)data[i][f]).ToArray(),
                 Label = (float)data[i][TARGET]
             }).ToList();
-        // --- IDataView setup (framework overhead, not part of split timing) ---
+        // IDataView setup, framework overhead, not part of split timing
         var schemaDef = SchemaDefinition.Create(typeof(ModelInput));
         schemaDef[nameof(ModelInput.Features)].ColumnType =
             new VectorDataViewType(NumberDataViewType.Single, featureCount);
@@ -483,14 +467,14 @@ class Program
             predView = model.Transform(testCached);
             ml.Data
                 .CreateEnumerable<ModelOutput>(predView, reuseRowObject: false)
-                .ToList();  // forces every prediction to actually execute
+                .ToList(); 
         });
 
         double inferNs      = NowNs() - t2;
         long inferHeapDelta = GetHeapBytes() - inferHeapBefore;
         long inferRssDelta  = inferRssPeak;
         
-        // --- Accuracy (R²) — computed outside timed blocks so it does not affect timing ---
+        //  Accuracy R² computed outside timed blocks so it does not affect timing 
         var metrics = ml.Regression.Evaluate(predView, labelColumnName: "Label", scoreColumnName: "Score");
         double r2 = metrics.RSquared;
         double rmse = metrics.RootMeanSquaredError;
